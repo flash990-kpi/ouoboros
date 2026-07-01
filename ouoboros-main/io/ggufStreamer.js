@@ -130,21 +130,31 @@ export class GgufStreamer {
     
     // Parser personalizzato per header GGUF
     async readGgufHeader(file) {
-        const headerSize = 10 * 1024 * 1024; // 10MB per header (aumentato per file grandi)
-        const headerBuffer = await this.readLocalSlice(0, headerSize);
-        const view = new DataView(headerBuffer);
+        // Prima leggi solo i primi 16 byte per ottenere le dimensioni
+        const initialBuffer = await this.readLocalSlice(0, 16);
+        const initialView = new DataView(initialBuffer);
         
         // Check magic number "GGUF"
-        const magic = view.getUint32(0, true);
+        const magic = initialView.getUint32(0, true);
         if (magic !== 0x46554747) {
             throw new Error('Magic number GGUF non valido');
         }
         
-        const version = view.getUint32(4, true);
-        const tensorCount = view.getUint32(8, true);
-        const metadataKVCount = view.getUint32(12, true);
+        const version = initialView.getUint32(4, true);
+        const tensorCount = initialView.getUint32(8, true);
+        const metadataKVCount = initialView.getUint32(12, true);
         
         console.log(`[GGUF] Version: ${version}, Tensors: ${tensorCount}, Metadata: ${metadataKVCount}`);
+        
+        // Stima dimensione header: 16 byte base + metadata (stimato 1KB per KV) + tensor info (stimato 2KB per tensore per modelli grandi)
+        const estimatedHeaderSize = 16 + (metadataKVCount * 1024) + (tensorCount * 2048);
+        const maxHeaderSize = Math.min(estimatedHeaderSize, 200 * 1024 * 1024); // Max 200MB
+        const headerSize = Math.max(maxHeaderSize, 50 * 1024 * 1024); // Minimo 50MB per modelli grandi
+        
+        console.log(`[GGUF] Reading header with buffer size: ${headerSize / 1024 / 1024}MB`);
+        
+        const headerBuffer = await this.readLocalSlice(0, headerSize);
+        const view = new DataView(headerBuffer);
         
         let offset = 16;
         
