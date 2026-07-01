@@ -37,6 +37,7 @@
     "typescript": "^5.0.0"
   },
   "dependencies": {
-    "commander": "^11.0.0"
+    "commander": "^11.0.0",
+    "@huggingface/inference": "^2.6.4"
   }
 }

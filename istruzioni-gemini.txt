@@ -1,0 +1,66 @@
+ attenzione VOGLIO CODICE PULITO, GIA PRONTO PER LA PRODUZIONE, SENZA ALCUN PLACEHOLDER, CHE SEGUA QUESTA LOGICA: 1. Il Concetto: A.S.T.S. (Adaptive Sparse Topology Synthesis)
+La nostra tecnologia proprietaria, A.S.T.S., non è un modello di inferenza classico. È un motore di navigazione topologica.
+
+Invece di caricare il modello (GGUF) in RAM o VRAM, il sistema tratta il modello come una mappa dinamica.
+
+A.S.T.S. legge il file .ouro (che funge da "indice topologico") e, basandosi sul prompt, calcola quali cluster di pesi nel GGUF sono necessari.
+
+Il sistema effettua uno streaming parziale dei pesi dal file, inviandoli direttamente alla pipeline di calcolo (WebGPU/WebNN).
+
+Risultato: La memoria utilizzata è solo quella necessaria per il singolo calcolo (micro-buffer), mantenendo il dispositivo fresco e abbattendo il consumo energetico.
+
+2. Architettura Hardware: "Hardware Auditor"
+Il sistema non assume nulla. All'avvio, un modulo (il Hardware Auditor) interroga il browser:
+
+NPU Discovery: Cerca il supporto a WebNN (API specifica per acceleratori neurali). Se presente, lo imposta come primario (ideale per smartphone).
+
+GPU Discovery: Se WebNN non è disponibile, cerca WebGPU (API grafica ad alte prestazioni).
+
+CPU Fallback: Se nulla di accelerato è disponibile, utilizza WASM (WebAssembly) con estensioni SIMD (Single Instruction, Multiple Data) per processare i vettori in parallelo.
+
+3. Struttura del Progetto (Nuova Cartella)
+Questa è la struttura pulita, modulare e orientata all'efficienza.
+
+Plaintext
+/ouroboros-core
+├── /kernel                <-- Orchestratore centrale (The "Brain")
+│   ├── scheduler.ts       <-- Gestisce i thread e la priorità dei calcoli
+│   └── stateMachine.ts    <-- Gestisce il ciclo Analisi -> Sintesi -> Esecuzione
+├── /asts                  <-- Motore Proprietario A.S.T.S.
+│   ├── topologyParser.ts  <-- Legge e interpreta il file .ouro
+│   ├── weightSynthesizer.ts <-- Logica matematica della formula di rigenerazione
+│   └── sparsityPredictor.ts <-- Determina il "percorso" dei pesi
+├── /hw                    <-- Hardware Abstraction Layer (HAL)
+│   ├── auditor.ts         <-- Rileva NPU/GPU/CPU
+│   ├── webnn_driver.ts    <-- Driver per NPU
+│   ├── webgpu_driver.ts   <-- Driver per GPU
+│   └── wasm_driver.ts     <-- Driver CPU (SIMD)
+├── /io                    <-- Gestione file (Zero-Copy)
+│   └── ggufStreamer.ts    <-- Legge il GGUF tramite chunk senza caricare tutto in RAM
+├── /models                <-- Cartella per i file .gguf e .ouro
+└── /public                <-- Web UI (Console di controllo in tempo reale)
+4. Come funziona il workflow (Dettaglio Tecnico)
+Bootstrapping: L'utente apre la web-app. Il file auditor.ts esegue il profiling dell'hardware in ~200ms.
+
+Inizializzazione Modello: L'utente punta al file Llama-X.gguf. Il sistema cerca il rispettivo Llama-X.ouro (il file topologico). Se non esiste, lo genera in locale analizzando l'header del GGUF.
+
+Richiesta Inferenza: Quando l'utente invia un prompt, sparsityPredictor.ts non "pensa" al linguaggio, ma alla geometria. Crea una mappa di "sintesi": "Per questa domanda servono i layer X, Y, Z con il rango R".
+
+Sintesi a Flusso (A.S.T.S.):
+
+Il ggufStreamer.ts apre il file GGUF in modalità read-only.
+
+Non legge i gigabyte. Legge solo i bytes agli offset definiti dalla mappa topologica.
+
+Questi byte passano nel weightSynthesizer.ts che applica la formula di rigenerazione basata sul rango e l'architettura.
+
+Esecuzione: I pesi sintetizzati vengono caricati in un buffer SharedArrayBuffer (inaccessibile dall'esterno, super veloce) e inviati al driver hardware (WebNN/WebGPU).
+
+Ciclo: Il modello genera il token. La memoria occupata è solo quella dei pesi attivi. Il sistema rimane freddo perché non c'è calcolo ridondante.
+
+Perché questa architettura "Asfalta" tutto?
+Zero RAM Loading: A differenza dei framework classici, Ouroboros non carica mai il modello in memoria. È un sistema "a richiesta".
+
+Thermal Efficiency: Non essendoci saturazione del bus di memoria (i dati sono letti chirugicamente), il SoC non va in throttling. Puoi far girare modelli enormi su un telefono che rimarrà tiepido.
+
+Universalità: Poiché gira tutto su standard web (WebNN, WebGPU, WASM), il tuo codice non cambia tra PC, Android, iOS o Linux. Scrivi una volta, gira ovunque alla massima velocità possibile per quel dispositivo.  E CHE SIA PERFETTAMENTE FUNZIONANTE AL MASSIMO DELEL SUE CAPACITA FIN DA SUBITO
