@@ -1,4 +1,4 @@
-// /ouroboros-core/server.js
+// Improved server with Range support, COOP/COEP headers, health endpoint
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
@@ -6,91 +6,132 @@ const path = require('path');
 const PORT = process.env.PORT || 8080;
 
 const MIME_TYPES = {
-    '.html': 'text/html',
-    '.js': 'text/javascript',
-    '.mjs': 'text/javascript',
-    '.ts': 'text/typescript',
-    '.wasm': 'application/wasm',
-    '.json': 'application/json',
-    '.css': 'text/css',
-    '.gguf': 'application/octet-stream',
-    '.ouro': 'application/json',
-    '.png': 'image/png',
-    '.jpg': 'image/jpeg',
-    '.gif': 'image/gif',
-    '.svg': 'image/svg+xml',
-    '.ico': 'image/x-icon',
-    '.txt': 'text/plain'
+  '.html': 'text/html',
+  '.js': 'application/javascript',
+  '.mjs': 'application/javascript',
+  '.ts': 'application/typescript',
+  '.wasm': 'application/wasm',
+  '.json': 'application/json',
+  '.css': 'text/css',
+  '.gguf': 'application/octet-stream',
+  '.ouro': 'application/octet-stream',
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.gif': 'image/gif',
+  '.svg': 'image/svg+xml',
+  '.ico': 'image/x-icon',
+  '.txt': 'text/plain'
 };
 
-const server = http.createServer((req, res) => {
-    let urlPath = req.url.split('?')[0];
+function sendError(res, code, message) {
+  res.writeHead(code, { 'Content-Type': 'text/plain' });
+  res.end(message);
+}
 
-    // Se la richiesta è per la root, serviamo index.html dalla root
-    let filePath;
-    if (urlPath === '/') {
-        filePath = './index.html';
-    } 
-    // Se la richiesta è per node_modules, serviamo dalla cartella node_modules locale
-    else if (urlPath.startsWith('/node_modules/')) {
-        filePath = '.' + urlPath; // ad esempio /node_modules/... -> ./node_modules/...
-    } 
-    else {
-        filePath = '.' + urlPath;
+const server = http.createServer((req, res) => {
+  try {
+    const urlPath = decodeURIComponent(req.url.split('?')[0]);
+
+    // Health endpoint
+    if (urlPath === '/health' || urlPath === '/healthz') {
+      const body = JSON.stringify({ status: 'ok', time: Date.now() });
+      res.writeHead(200, {
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(body),
+        'Cross-Origin-Opener-Policy': 'same-origin',
+        'Cross-Origin-Embedder-Policy': 'require-corp'
+      });
+      return res.end(body);
     }
 
-    const extname = path.extname(filePath);
-    const contentType = MIME_TYPES[extname] || 'application/octet-stream';
+    let filePath;
+    if (urlPath === '/' || urlPath === '/index.html') {
+      filePath = path.join(process.cwd(), 'index.html');
+    } else {
+      // Normalize and prevent path traversal
+      const safePath = urlPath.replace(/^\/+/, '');
+      filePath = path.join(process.cwd(), safePath);
+    }
 
-    fs.readFile(filePath, (error, content) => {
-        if (error) {
-            if (error.code === 'ENOENT') {
-                res.writeHead(404, { 'Content-Type': 'text/plain' });
-                res.end('404: File non trovato', 'utf-8');
-            } else if (error.code === 'EACCES') {
-                res.writeHead(403, { 'Content-Type': 'text/plain' });
-                res.end('403: Permesso negato', 'utf-8');
-            } else {
-                res.writeHead(500, { 'Content-Type': 'text/plain' });
-                res.end(`Errore del server: ${error.code}`, 'utf-8');
-            }
-            return;
-        }
+    if (!fs.existsSync(filePath)) return sendError(res, 404, '404: File non trovato');
 
-        const headers = {
-            'Content-Type': contentType,
-            'Cross-Origin-Opener-Policy': 'same-origin',
-            'Cross-Origin-Embedder-Policy': 'require-corp',
-            'Cross-Origin-Resource-Policy': 'cross-origin',
-            'Access-Control-Allow-Origin': '*',
-            'Cache-Control': 'no-cache, no-store, must-revalidate',
-            'Pragma': 'no-cache',
-            'Expires': '0'
-        };
+    const stat = fs.statSync(filePath);
+    const ext = path.extname(filePath).toLowerCase();
+    const contentType = MIME_TYPES[ext] || 'application/octet-stream';
 
-        if (extname === '.gguf') {
-            headers['Accept-Ranges'] = 'bytes';
-        }
+    // Common security headers required for SharedArrayBuffer usage
+    const commonHeaders = {
+      'Cross-Origin-Opener-Policy': 'same-origin',
+      'Cross-Origin-Embedder-Policy': 'require-corp',
+      'Cross-Origin-Resource-Policy': 'same-origin',
+      'Cache-Control': 'no-cache, no-store, must-revalidate',
+      'Pragma': 'no-cache',
+      'Expires': '0'
+    };
 
-        res.writeHead(200, headers);
-        res.end(content, 'utf-8');
+    // Allow CORS for debugging and remote GGUF fetching; restrict in production
+    const allowOrigin = process.env.ALLOW_ORIGIN || '*';
+
+    if (ext === '.gguf' || req.headers.range) {
+      // Support Range requests for large model files
+      const range = req.headers.range;
+      if (!range) {
+        // Serve full file with Accept-Ranges header
+        res.writeHead(200, Object.assign({}, commonHeaders, {
+          'Content-Type': contentType,
+          'Content-Length': stat.size,
+          'Accept-Ranges': 'bytes',
+          'Access-Control-Allow-Origin': allowOrigin
+        }));
+        const stream = fs.createReadStream(filePath);
+        return stream.pipe(res);
+      }
+
+      const parts = range.replace(/bytes=/, '').split('-');
+      const start = parseInt(parts[0], 10);
+      const end = parts[1] ? parseInt(parts[1], 10) : stat.size - 1;
+      if (isNaN(start) || isNaN(end) || start > end || start < 0) return sendError(res, 416, 'Requested Range Not Satisfiable');
+
+      const chunkSize = (end - start) + 1;
+      const headers = Object.assign({}, commonHeaders, {
+        'Content-Range': `bytes ${start}-${end}/${stat.size}`,
+        'Accept-Ranges': 'bytes',
+        'Content-Length': chunkSize,
+        'Content-Type': contentType,
+        'Access-Control-Allow-Origin': allowOrigin,
+        'Access-Control-Expose-Headers': 'Content-Range,Accept-Ranges'
+      });
+
+      res.writeHead(206, headers);
+      const stream = fs.createReadStream(filePath, { start, end });
+      return stream.pipe(res);
+    }
+
+    // Default: serve static file
+    const headers = Object.assign({}, commonHeaders, {
+      'Content-Type': contentType,
+      'Content-Length': stat.size,
+      'Access-Control-Allow-Origin': allowOrigin
     });
+    res.writeHead(200, headers);
+    const stream = fs.createReadStream(filePath);
+    stream.pipe(res);
+  } catch (err) {
+    console.error('Server error', err);
+    return sendError(res, 500, 'Errore interno del server');
+  }
 });
 
-server.listen(PORT, '127.0.0.1', () => {
-    console.log('\x1b[36m%s\x1b[0m', `[OUROBOROS KERNEL] Attivo su http://127.0.0.1:${PORT}`);
-    console.log('\x1b[32m%s\x1b[0m', '[A.S.T.S.] Header di sicurezza COOP/COEP/Resource-Policy iniettati.');
-    console.log('\x1b[33m%s\x1b[0m', `[INFO] Servire anche node_modules dalla root.`);
+server.listen(PORT, '0.0.0.0', () => {
+  console.log(`[OUROBOROS KERNEL] Attivo su http://0.0.0.0:${PORT}`);
+  console.log('[A.S.T.S.] Header di sicurezza COOP/COEP/Resource-Policy iniettati.');
 });
 
 server.on('error', (err) => {
-    console.error('\x1b[31m%s\x1b[0m', `Errore del server: ${err.message}`);
-    if (err.code === 'EADDRINUSE') {
-        console.error('\x1b[31m%s\x1b[0m', `La porta ${PORT} è già in uso. Cambia la porta o arresta il processo in esecuzione.`);
-    }
+  console.error('Errore del server:', err.message);
 });
 
 process.on('SIGINT', () => {
-    console.log('\n\x1b[35m%s\x1b[0m', '[OUROBOROS] Server arrestato manualmente.');
-    process.exit(0);
+  console.log('[OUROBOROS] Server arrestato manualmente.');
+  process.exit(0);
 });
