@@ -509,582 +509,600 @@
     <!-- MAIN LOGIC -->
     <script type="module">
         // ---- Ouroboros UI ----
-        console.log('Ouroboros UI: avviata');
-
-        const $ = id => document.getElementById(id);
-        const terminal = $('console-terminal');
-        const dropZone = $('drop-zone');
-        const fileInput = $('file-input-hidden');
-        const fileStatus = $('file-status');
-        const fileSize = $('file-size');
-        const modelInfo = $('model-info');
-        const promptInput = $('prompt-input');
-        const btnExecute = $('btn-execute');
-        const progressBar = $('progress-bar');
-        const statusIndicator = $('status-indicator');
-        const badgeHw = $('hw-engine-badge');
-        const badgeVram = $('vram-buffer-badge');
-        const metricTps = $('metric-tps');
-        const metricTtft = $('metric-ttft');
-        const metricSandbox = $('metric-sandbox');
-        const gridLayers = $('topology-layer-grid');
-        const lblClusters = $('lbl-active-clusters');
-        const fsmAnalisi = $('fsm-analisi');
-        const fsmSintesi = $('fsm-sintesi');
-        const fsmHardware = $('fsm-hardware');
-        const hfApiKey = $('hf-api-key');
-        const modelSearch = $('model-search');
-        const btnSearch = $('btn-search');
-        const searchResults = $('search-results');
-        const selectedModel = $('selected-model');
-
-        let kernel = null, streamer = null, ouroBuffer = null;
-        let modelLoaded = false, isGenerating = false;
-        let tokenCount = 0, firstTokenTime = 0, startTime = 0;
-        let selectedHfModel = '';
-        let webEngine = null;
-        const totalLayers = 80;
-
-        function log(msg, type = '') {
-            const div = document.createElement('div');
-            const ts = new Date().toLocaleTimeString();
-            const prefix = `[${ts}] `;
-            if (type === 'success') div.className = 'success';
-            else if (type === 'error') div.className = 'error';
-            else if (type === 'token') {
-                let bucket = terminal.querySelector('.token-bucket');
-                if (!bucket) {
-                    bucket = document.createElement('span');
-                    bucket.className = 'token-bucket';
-                    terminal.appendChild(bucket);
-                }
-                bucket.textContent += msg;
-                terminal.scrollTop = terminal.scrollHeight;
-                return;
-            } else div.className = 'sys';
-            const old = terminal.querySelector('.token-bucket');
-            if (old) old.classList.remove('token-bucket');
-            div.textContent = prefix + msg;
-            terminal.appendChild(div);
-            terminal.scrollTop = terminal.scrollHeight;
-        }
-
-        function updateFSM(state) {
-            const reset = 'fsm-item';
-            fsmAnalisi.className = reset;
-            fsmSintesi.className = reset;
-            fsmHardware.className = reset;
-            if (state === 'ANALISI') fsmAnalisi.className = 'fsm-item active-analisi';
-            else if (state === 'SINTESI') fsmSintesi.className = 'fsm-item active-sintesi';
-            else if (state === 'HARDWARE') fsmHardware.className = 'fsm-item active-hardware';
-        }
-
-        function updateProgress(val) {
-            progressBar.style.width = Math.min(100, val) + '%';
-        }
-
-        function buildGrid() {
-            gridLayers.innerHTML = '';
-            for (let i = 0; i < totalLayers; i++) {
-                const cell = document.createElement('div');
-                cell.className = 'cell';
-                cell.dataset.idx = i;
-                gridLayers.appendChild(cell);
-            }
-        }
-        buildGrid();
-
-        function updateLayers(active) {
-            const cells = gridLayers.querySelectorAll('.cell');
-            cells.forEach((cell, i) => {
-                cell.classList.toggle('active', active.includes(i));
-            });
-            lblClusters.textContent = `Cluster: ${active.length} / 2048`;
-        }
-
-        // ---- Drag & Drop ----
-        console.log('Setting up drag and drop...');
-        console.log('dropZone:', dropZone);
-        console.log('fileInput:', fileInput);
         
-        if (!dropZone || !fileInput) {
-            console.error('Drop zone or file input not found');
-            log('ERRORE: Elementi UI non trovati', 'error');
-        } else {
-            dropZone.addEventListener('click', () => {
-                console.log('Drop zone clicked, triggering file input');
-                fileInput.click();
-            });
-            
-            dropZone.addEventListener('dragover', e => {
-                console.log('Drag over');
-                e.preventDefault();
-                e.stopPropagation();
-                dropZone.classList.add('dragover');
-            });
-            
-            dropZone.addEventListener('dragleave', e => {
-                console.log('Drag leave');
-                e.preventDefault();
-                e.stopPropagation();
-                dropZone.classList.remove('dragover');
-            });
-            
-            dropZone.addEventListener('drop', async e => {
-                console.log('Drop event triggered');
-                e.preventDefault();
-                e.stopPropagation();
-                dropZone.classList.remove('dragover');
-                
-                const files = e.dataTransfer.files;
-                console.log('Files dropped:', files.length);
-                
-                if (!files || files.length === 0) {
-                    log('Nessun file selezionato', 'error');
-                    return;
-                }
-                
-                const file = files[0];
-                console.log('File:', file.name, file.size);
-                
-                if (!file.name.toLowerCase().endsWith('.gguf')) {
-                    log('Il file deve avere estensione .gguf', 'error');
-                    return;
-                }
-                
-                handleFile(file);
-            });
+        // Wait for DOM to be fully loaded
+        document.addEventListener('DOMContentLoaded', () => {
+            console.log('Ouroboros UI: DOM loaded, initializing...');
+            initOuroborosUI();
+        });
 
-            fileInput.addEventListener('change', e => {
-                console.log('File input changed, files:', e.target.files);
-                if (e.target.files && e.target.files.length > 0) {
-                    handleFile(e.target.files[0]);
-                }
-            });
-            
-            console.log('Drag and drop setup complete');
-        }
+        function initOuroborosUI() {
+            console.log('Ouroboros UI: avviata');
 
-        async function handleFile(file) {
-            console.log('handleFile called with:', file);
-            
-            if (!fileStatus || !fileSize) {
-                console.error('File status elements not found');
-                log('ERRORE: Elementi UI non trovati', 'error');
-                return;
-            }
-            
-            fileStatus.textContent = `📄 ${file.name}`;
-            fileSize.textContent = `${(file.size / 1e9).toFixed(2)} GB`;
-            log(`File selezionato: ${file.name} (${(file.size / 1e9).toFixed(2)} GB)`);
-            
-            try {
-                await loadModulesAndStart(file);
-            } catch (error) {
-                log(`ERRORE caricamento file: ${error.message}`, 'error');
-                console.error('Load error:', error);
-            }
-        }
+            const $ = id => document.getElementById(id);
+            const terminal = $('console-terminal');
+            const dropZone = $('drop-zone');
+            const fileInput = $('file-input-hidden');
+            const fileStatus = $('file-status');
+            const fileSize = $('file-size');
+            const modelInfo = $('model-info');
+            const promptInput = $('prompt-input');
+            const btnExecute = $('btn-execute');
+            const progressBar = $('progress-bar');
+            const statusIndicator = $('status-indicator');
+            const badgeHw = $('hw-engine-badge');
+            const badgeVram = $('vram-buffer-badge');
+            const metricTps = $('metric-tps');
+            const metricTtft = $('metric-ttft');
+            const metricSandbox = $('metric-sandbox');
+            const gridLayers = $('topology-layer-grid');
+            const lblClusters = $('lbl-active-clusters');
+            const fsmAnalisi = $('fsm-analisi');
+            const fsmSintesi = $('fsm-sintesi');
+            const fsmHardware = $('fsm-hardware');
+            const hfApiKey = $('hf-api-key');
+            const modelSearch = $('model-search');
+            const btnSearch = $('btn-search');
+            const searchResults = $('search-results');
+            const selectedModel = $('selected-model');
 
-        // ---- Caricamento kernel ----
-        async function loadModulesAndStart(file) {
-            try {
-                const { OuroborosKernel } = await import('./kernel/stateMachine.js');
-                const { GgufStreamer } = await import('./io/ggufStreamer.js');
-                const { HardwareAuditor } = await import('./hw/auditor.js');
-                const { TopologyParser } = await import('./asts/topologyParser.js');
-                const { Scheduler } = await import('./kernel/scheduler.js');
+            console.log('UI Elements check:');
+            console.log('terminal:', terminal);
+            console.log('dropZone:', dropZone);
+            console.log('fileInput:', fileInput);
+            console.log('btnSearch:', btnSearch);
+            console.log('modelSearch:', modelSearch);
+            console.log('btnExecute:', btnExecute);
+            console.log('promptInput:', promptInput);
 
-                log('Moduli A.S.T.S. caricati.', 'success');
+            let kernel = null, streamer = null, ouroBuffer = null;
+            let modelLoaded = false, isGenerating = false;
+            let tokenCount = 0, firstTokenTime = 0, startTime = 0;
+            let selectedHfModel = '';
+            let webEngine = null;
+            const totalLayers = 80;
 
-                const auditor = new HardwareAuditor();
-                const profile = await auditor.profileDevice();
-                badgeHw.textContent = profile.primaryDriver;
-
-                const source = { type: 'LOCAL', fileObject: file };
-                streamer = new GgufStreamer(source);
-                updateFSM('ANALISI');
-                updateProgress(10);
-                log('Generazione indice topologico dal GGUF...');
-                ouroBuffer = await streamer.generateTopologyFromGguf();
-                updateProgress(30);
-
-                const scheduler = new Scheduler();
-                const stateNotifier = (state, payload) => {
-                    if (state === 'IDLE') {
-                        updateProgress(100);
-                        modelLoaded = true;
-                        promptInput.disabled = false;
-                        btnExecute.disabled = false;
-                        promptInput.placeholder = 'Inserisci il prompt...';
-                        statusIndicator.style.boxShadow = '0 0 12px #00ffcc';
-                        log('Kernel A.S.T.S. pronto.', 'success');
-                    } else if (state === 'ANALYSIS') {
-                        updateFSM('ANALISI');
-                        updateProgress(20);
-                        log('Analisi geometrica del prompt...');
-                    } else if (state === 'SYNTHESIS') {
-                        updateFSM('SINTESI');
-                        updateProgress(40);
-                        log(`Sintesi tensore ${payload?.hash || ''} (${payload?.index}/${payload?.total})`);
-                    } else if (state === 'EXECUTION') {
-                        updateFSM('HARDWARE');
-                        updateProgress(70);
-                        if (payload?.layer !== undefined) {
-                            updateLayers([payload.layer]);
-                        }
-                    } else if (state === 'ERROR') {
-                        log(`ERRORE KERNEL: ${payload?.reason || 'sconosciuto'}`, 'error');
-                        updateProgress(0);
+            function log(msg, type = '') {
+                const div = document.createElement('div');
+                const ts = new Date().toLocaleTimeString();
+                const prefix = `[${ts}] `;
+                if (type === 'success') div.className = 'success';
+                else if (type === 'error') div.className = 'error';
+                else if (type === 'token') {
+                    let bucket = terminal.querySelector('.token-bucket');
+                    if (!bucket) {
+                        bucket = document.createElement('span');
+                        bucket.className = 'token-bucket';
+                        terminal.appendChild(bucket);
                     }
-                };
-
-                kernel = new OuroborosKernel(stateNotifier);
-                await kernel.boot(source, ouroBuffer);
-
-                const topology = new TopologyParser().parseIndex(ouroBuffer);
-                modelInfo.style.display = 'block';
-                modelInfo.textContent = `Tensori: ${topology.tensorCount} | Layer: ${topology.layerCount}`;
-                metricSandbox.innerHTML = `${(file.size / 1e9).toFixed(2)} <span class="unit">GB (streaming)</span>`;
-
-            } catch (err) {
-                log(`ERRORE: ${err.message}`, 'error');
-                console.error(err);
-                fileStatus.textContent = '⚠️ Errore - vedi console';
+                    bucket.textContent += msg;
+                    terminal.scrollTop = terminal.scrollHeight;
+                    return;
+                } else div.className = 'sys';
+                const old = terminal.querySelector('.token-bucket');
+                if (old) old.classList.remove('token-bucket');
+                div.textContent = prefix + msg;
+                terminal.appendChild(div);
+                terminal.scrollTop = terminal.scrollHeight;
             }
-        }
 
-        // ---- Inferenza ----
-        async function runInference() {
-            if (isGenerating || !modelLoaded || !kernel) return;
-            const prompt = promptInput.value.trim();
-            if (!prompt) return;
+            function updateFSM(state) {
+                const reset = 'fsm-item';
+                fsmAnalisi.className = reset;
+                fsmSintesi.className = reset;
+                fsmHardware.className = reset;
+                if (state === 'ANALISI') fsmAnalisi.className = 'fsm-item active-analisi';
+                else if (state === 'SINTESI') fsmSintesi.className = 'fsm-item active-sintesi';
+                else if (state === 'HARDWARE') fsmHardware.className = 'fsm-item active-hardware';
+            }
 
-            isGenerating = true;
-            promptInput.disabled = true;
-            btnExecute.disabled = true;
-            tokenCount = 0;
-            firstTokenTime = 0;
-            startTime = performance.now();
-            metricTtft.innerHTML = '0 <span class="unit">ms</span>';
-            metricTps.innerHTML = '0.00 <span class="unit">tok/sec</span>';
-            updateProgress(0);
-            const old = terminal.querySelector('.token-bucket');
-            if (old) old.remove();
-            log(`Utente: ${prompt}`);
+            function updateProgress(val) {
+                progressBar.style.width = Math.min(100, val) + '%';
+            }
 
-            try {
-                await kernel.submitInference(prompt, (token, metrics) => {
-                    handleToken(token);
-                    if (metrics) {
-                        const layer = metrics.layer;
-                        if (layer !== undefined) updateLayers([layer]);
-                        const p = Math.min(100, (tokenCount / 200) * 80 + 20);
-                        updateProgress(p);
+            function buildGrid() {
+                gridLayers.innerHTML = '';
+                for (let i = 0; i < totalLayers; i++) {
+                    const cell = document.createElement('div');
+                    cell.className = 'cell';
+                    cell.dataset.idx = i;
+                    gridLayers.appendChild(cell);
+                }
+            }
+            buildGrid();
+
+            function updateLayers(active) {
+                const cells = gridLayers.querySelectorAll('.cell');
+                cells.forEach((cell, i) => {
+                    cell.classList.toggle('active', active.includes(i));
+                });
+                lblClusters.textContent = `Cluster: ${active.length} / 2048`;
+            }
+
+            // ---- Drag & Drop ----
+            console.log('Setting up drag and drop...');
+            console.log('dropZone:', dropZone);
+            console.log('fileInput:', fileInput);
+            
+            if (!dropZone || !fileInput) {
+                console.error('Drop zone or file input not found');
+                log('ERRORE: Elementi UI non trovati', 'error');
+            } else {
+                dropZone.addEventListener('click', () => {
+                    console.log('Drop zone clicked, triggering file input');
+                    fileInput.click();
+                });
+                
+                dropZone.addEventListener('dragover', e => {
+                    console.log('Drag over');
+                    e.preventDefault();
+                    e.stopPropagation();
+                    dropZone.classList.add('dragover');
+                });
+                
+                dropZone.addEventListener('dragleave', e => {
+                    console.log('Drag leave');
+                    e.preventDefault();
+                    e.stopPropagation();
+                    dropZone.classList.remove('dragover');
+                });
+                
+                dropZone.addEventListener('drop', async e => {
+                    console.log('Drop event triggered');
+                    e.preventDefault();
+                    e.stopPropagation();
+                    dropZone.classList.remove('dragover');
+                    
+                    const files = e.dataTransfer.files;
+                    console.log('Files dropped:', files.length);
+                    
+                    if (!files || files.length === 0) {
+                        log('Nessun file selezionato', 'error');
+                        return;
+                    }
+                    
+                    const file = files[0];
+                    console.log('File:', file.name, file.size);
+                    
+                    if (!file.name.toLowerCase().endsWith('.gguf')) {
+                        log('Il file deve avere estensione .gguf', 'error');
+                        return;
+                    }
+                    
+                    handleFile(file);
+                });
+
+                fileInput.addEventListener('change', e => {
+                    console.log('File input changed, files:', e.target.files);
+                    if (e.target.files && e.target.files.length > 0) {
+                        handleFile(e.target.files[0]);
                     }
                 });
-                updateProgress(100);
-                log('Inferenza completata.', 'success');
-            } catch (err) {
-                log(`Errore inferenza: ${err.message}`, 'error');
-                progressBar.style.background = '#f87171';
-            } finally {
-                isGenerating = false;
-                promptInput.disabled = false;
-                btnExecute.disabled = false;
-                promptInput.focus();
+                
+                console.log('Drag and drop setup complete');
             }
-        }
 
-        function handleToken(token) {
-            const now = performance.now();
-            if (tokenCount === 0) {
-                firstTokenTime = now;
-                const ttft = Math.round(now - startTime);
-                metricTtft.innerHTML = `${ttft} <span class="unit">ms</span>`;
-            }
-            tokenCount++;
-            log(token, 'token');
-
-            if (firstTokenTime > 0) {
-                const elapsed = (now - firstTokenTime) / 1000;
-                if (elapsed > 0) {
-                    const tps = (tokenCount / elapsed).toFixed(2);
-                    metricTps.innerHTML = `${tps} <span class="unit">tok/sec</span>`;
-                }
-            }
-            badgeVram.textContent = `${(tokenCount * 0.1).toFixed(2)} MB`;
-        }
-
-        // ---- Execute button ----
-        if (btnExecute && promptInput) {
-            btnExecute.addEventListener('click', runInference);
-            promptInput.addEventListener('keydown', e => {
-                if (e.key === 'Enter' && !btnExecute.disabled) runInference();
-            });
-        } else {
-            console.error('Execute button or prompt input not found');
-        }
-
-        // ---- Hugging Face Model Search ----
-        if (!btnSearch || !modelSearch || !searchResults) {
-            console.error('Hugging Face UI elements not found');
-        } else {
-            btnSearch.addEventListener('click', async () => {
-                const query = modelSearch.value.trim();
-                if (!query) {
-                    log('Inserisci un termine di ricerca', 'error');
+            async function handleFile(file) {
+                console.log('handleFile called with:', file);
+                
+                if (!fileStatus || !fileSize) {
+                    console.error('File status elements not found');
+                    log('ERRORE: Elementi UI non trovati', 'error');
                     return;
                 }
+                
+                fileStatus.textContent = `📄 ${file.name}`;
+                fileSize.textContent = `${(file.size / 1e9).toFixed(2)} GB`;
+                log(`File selezionato: ${file.name} (${(file.size / 1e9).toFixed(2)} GB)`);
+                
+                try {
+                    await loadModulesAndStart(file);
+                } catch (error) {
+                    log(`ERRORE caricamento file: ${error.message}`, 'error');
+                    console.error('Load error:', error);
+                }
+            }
+
+            // ---- Caricamento kernel ----
+            async function loadModulesAndStart(file) {
+                try {
+                    const { OuroborosKernel } = await import('./kernel/stateMachine.js');
+                    const { GgufStreamer } = await import('./io/ggufStreamer.js');
+                    const { HardwareAuditor } = await import('./hw/auditor.js');
+                    const { TopologyParser } = await import('./asts/topologyParser.js');
+                    const { Scheduler } = await import('./kernel/scheduler.js');
+
+                    log('Moduli A.S.T.S. caricati.', 'success');
+
+                    const auditor = new HardwareAuditor();
+                    const profile = await auditor.profileDevice();
+                    badgeHw.textContent = profile.primaryDriver;
+
+                    const source = { type: 'LOCAL', fileObject: file };
+                    streamer = new GgufStreamer(source);
+                    updateFSM('ANALISI');
+                    updateProgress(10);
+                    log('Generazione indice topologico dal GGUF...');
+                    ouroBuffer = await streamer.generateTopologyFromGguf();
+                    updateProgress(30);
+
+                    const scheduler = new Scheduler();
+                    const stateNotifier = (state, payload) => {
+                        if (state === 'IDLE') {
+                            updateProgress(100);
+                            modelLoaded = true;
+                            promptInput.disabled = false;
+                            btnExecute.disabled = false;
+                            promptInput.placeholder = 'Inserisci il prompt...';
+                            statusIndicator.style.boxShadow = '0 0 12px #00ffcc';
+                            log('Kernel A.S.T.S. pronto.', 'success');
+                        } else if (state === 'ANALYSIS') {
+                            updateFSM('ANALISI');
+                            updateProgress(20);
+                            log('Analisi geometrica del prompt...');
+                        } else if (state === 'SYNTHESIS') {
+                            updateFSM('SINTESI');
+                            updateProgress(40);
+                            log(`Sintesi tensore ${payload?.hash || ''} (${payload?.index}/${payload?.total})`);
+                        } else if (state === 'EXECUTION') {
+                            updateFSM('HARDWARE');
+                            updateProgress(70);
+                            if (payload?.layer !== undefined) {
+                                updateLayers([payload.layer]);
+                            }
+                        } else if (state === 'ERROR') {
+                            log(`ERRORE KERNEL: ${payload?.reason || 'sconosciuto'}`, 'error');
+                            updateProgress(0);
+                        }
+                    };
+
+                    kernel = new OuroborosKernel(stateNotifier);
+                    await kernel.boot(source, ouroBuffer);
+
+                    const topology = new TopologyParser().parseIndex(ouroBuffer);
+                    modelInfo.style.display = 'block';
+                    modelInfo.textContent = `Tensori: ${topology.tensorCount} | Layer: ${topology.layerCount}`;
+                    metricSandbox.innerHTML = `${(file.size / 1e9).toFixed(2)} <span class="unit">GB (streaming)</span>`;
+
+                } catch (err) {
+                    log(`ERRORE: ${err.message}`, 'error');
+                    console.error(err);
+                    fileStatus.textContent = '⚠️ Errore - vedi console';
+                }
+            }
+
+            // ---- Inferenza ----
+            async function runInference() {
+                if (isGenerating || !modelLoaded || !kernel) return;
+                const prompt = promptInput.value.trim();
+                if (!prompt) return;
+
+                isGenerating = true;
+                promptInput.disabled = true;
+                btnExecute.disabled = true;
+                tokenCount = 0;
+                firstTokenTime = 0;
+                startTime = performance.now();
+                metricTtft.innerHTML = '0 <span class="unit">ms</span>';
+                metricTps.innerHTML = '0.00 <span class="unit">tok/sec</span>';
+                updateProgress(0);
+                const old = terminal.querySelector('.token-bucket');
+                if (old) old.remove();
+                log(`Utente: ${prompt}`);
 
                 try {
-                    log(`Ricerca modelli: "${query}"...`);
-                    searchResults.style.display = 'block';
-                    searchResults.innerHTML = '<div style="padding:0.5rem; color:#606080;">Ricerca in corso...</div>';
+                    await kernel.submitInference(prompt, (token, metrics) => {
+                        handleToken(token);
+                        if (metrics) {
+                            const layer = metrics.layer;
+                            if (layer !== undefined) updateLayers([layer]);
+                            const p = Math.min(100, (tokenCount / 200) * 80 + 20);
+                            updateProgress(p);
+                        }
+                    });
+                    updateProgress(100);
+                    log('Inferenza completata.', 'success');
+                } catch (err) {
+                    log(`Errore inferenza: ${err.message}`, 'error');
+                    progressBar.style.background = '#f87171';
+                } finally {
+                    isGenerating = false;
+                    promptInput.disabled = false;
+                    btnExecute.disabled = false;
+                    promptInput.focus();
+                }
+            }
 
-                    const response = await fetch(
-                        `https://huggingface.co/api/models?search=${encodeURIComponent(query)}&limit=10`
-                    );
+            function handleToken(token) {
+                const now = performance.now();
+                if (tokenCount === 0) {
+                    firstTokenTime = now;
+                    const ttft = Math.round(now - startTime);
+                    metricTtft.innerHTML = `${ttft} <span class="unit">ms</span>`;
+                }
+                tokenCount++;
+                log(token, 'token');
 
-                    if (!response.ok) {
-                        throw new Error(`Errore ricerca: ${response.statusText}`);
+                if (firstTokenTime > 0) {
+                    const elapsed = (now - firstTokenTime) / 1000;
+                    if (elapsed > 0) {
+                        const tps = (tokenCount / elapsed).toFixed(2);
+                        metricTps.innerHTML = `${tps} <span class="unit">tok/sec</span>`;
                     }
+                }
+                badgeVram.textContent = `${(tokenCount * 0.1).toFixed(2)} MB`;
+            }
 
-                    const models = await response.json();
-                    searchResults.innerHTML = '';
+            // ---- Execute button ----
+            if (btnExecute && promptInput) {
+                btnExecute.addEventListener('click', runInference);
+                promptInput.addEventListener('keydown', e => {
+                    if (e.key === 'Enter' && !btnExecute.disabled) runInference();
+                });
+            } else {
+                console.error('Execute button or prompt input not found');
+            }
 
-                    if (models.length === 0) {
-                        searchResults.innerHTML = '<div style="padding:0.5rem; color:#606080;">Nessun modello trovato</div>';
+            // ---- Hugging Face Model Search ----
+            if (!btnSearch || !modelSearch || !searchResults) {
+                console.error('Hugging Face UI elements not found');
+            } else {
+                btnSearch.addEventListener('click', async () => {
+                    const query = modelSearch.value.trim();
+                    if (!query) {
+                        log('Inserisci un termine di ricerca', 'error');
                         return;
                     }
 
-                    models.forEach(model => {
-                        const div = document.createElement('div');
-                        div.style.cssText = 'padding:0.5rem; border-bottom:1px solid #2a2a3a; cursor:pointer; transition:background 0.2s;';
-                        div.innerHTML = `
-                            <div style="font-weight:700; color:#f0f0ff; font-size:0.65rem;">${model.modelId}</div>
-                            <div style="color:#606080; font-size:0.55rem; margin-top:0.2rem;">
-                                ❤️ ${model.likes || 0} | 📥 ${model.downloads || 0}
-                            </div>
-                        `;
-                        div.addEventListener('mouseenter', () => div.style.background = 'rgba(0,255,204,0.05)');
-                        div.addEventListener('mouseleave', () => div.style.background = 'transparent');
-                        div.addEventListener('click', () => selectHfModel(model.modelId));
-                        searchResults.appendChild(div);
-                    });
+                    try {
+                        log(`Ricerca modelli: "${query}"...`);
+                        searchResults.style.display = 'block';
+                        searchResults.innerHTML = '<div style="padding:0.5rem; color:#606080;">Ricerca in corso...</div>';
 
-                    log(`Trovati ${models.length} modelli`, 'success');
-                } catch (error) {
-                    log(`Errore ricerca: ${error.message}`, 'error');
-                    searchResults.innerHTML = '<div style="padding:0.5rem; color:#f87171;">Errore nella ricerca</div>';
-                }
-            });
+                        const response = await fetch(
+                            `https://huggingface.co/api/models?search=${encodeURIComponent(query)}&limit=10`
+                        );
 
-            modelSearch.addEventListener('keydown', e => {
-                if (e.key === 'Enter') btnSearch.click();
-            });
-        }
+                        if (!response.ok) {
+                            throw new Error(`Errore ricerca: ${response.statusText}`);
+                        }
 
-        function selectHfModel(modelId) {
-            selectedHfModel = modelId;
-            selectedModel.style.display = 'block';
-            selectedModel.textContent = `🤖 ${modelId}`;
-            searchResults.style.display = 'none';
-            modelSearch.value = '';
-            log(`Modello selezionato: ${modelId}`, 'success');
-            
-            // Enable inference with web engine
-            modelLoaded = true;
-            promptInput.disabled = false;
-            btnExecute.disabled = false;
-            promptInput.placeholder = 'Inserisci il prompt per inferenza cloud...';
-            badgeHw.textContent = 'HF Cloud';
-            statusIndicator.style.boxShadow = '0 0 12px #00ffcc';
-        }
+                        const models = await response.json();
+                        searchResults.innerHTML = '';
 
-        // ---- Web Inference Integration ----
-        async function runWebInference() {
-            if (isGenerating || !selectedHfModel) return;
-            const prompt = promptInput.value.trim();
-            if (!prompt) return;
+                        if (models.length === 0) {
+                            searchResults.innerHTML = '<div style="padding:0.5rem; color:#606080;">Nessun modello trovato</div>';
+                            return;
+                        }
 
-            isGenerating = true;
-            promptInput.disabled = true;
-            btnExecute.disabled = true;
-            tokenCount = 0;
-            firstTokenTime = 0;
-            startTime = performance.now();
-            metricTtft.innerHTML = '0 <span class="unit">ms</span>';
-            metricTps.innerHTML = '0.00 <span class="unit">tok/sec</span>';
-            updateProgress(0);
-            const old = terminal.querySelector('.token-bucket');
-            if (old) old.remove();
-            log(`Utente (Cloud): ${prompt}`);
+                        models.forEach(model => {
+                            const div = document.createElement('div');
+                            div.style.cssText = 'padding:0.5rem; border-bottom:1px solid #2a2a3a; cursor:pointer; transition:background 0.2s;';
+                            div.innerHTML = `
+                                <div style="font-weight:700; color:#f0f0ff; font-size:0.65rem;">${model.modelId}</div>
+                                <div style="color:#606080; font-size:0.55rem; margin-top:0.2rem;">
+                                    ❤️ ${model.likes || 0} | 📥 ${model.downloads || 0}
+                                </div>
+                            `;
+                            div.addEventListener('mouseenter', () => div.style.background = 'rgba(0,255,204,0.05)');
+                            div.addEventListener('mouseleave', () => div.style.background = 'transparent');
+                            div.addEventListener('click', () => selectHfModel(model.modelId));
+                            searchResults.appendChild(div);
+                        });
 
-            try {
-                const apiKey = hfApiKey.value.trim();
-                const headers = {
-                    'Content-Type': 'application/json'
-                };
-
-                if (apiKey) {
-                    headers['Authorization'] = `Bearer ${apiKey}`;
-                }
-
-                const body = {
-                    inputs: prompt,
-                    parameters: {
-                        temperature: 0.7,
-                        max_new_tokens: 200,
-                        top_p: 0.95,
-                        return_full_text: false
-                    }
-                };
-
-                updateFSM('ANALISI');
-                updateProgress(20);
-
-                const response = await fetch(
-                    `https://api-inference.huggingface.co/models/${selectedHfModel}`,
-                    {
-                        method: 'POST',
-                        headers,
-                        body: JSON.stringify(body)
-                    }
-                );
-
-                updateFSM('HARDWARE');
-                updateProgress(50);
-
-                if (!response.ok) {
-                    const errorText = await response.text();
-                    throw new Error(`Inference failed: ${response.statusText} - ${errorText}`);
-                }
-
-                const result = await response.json();
-                const endTime = performance.now();
-                const latency = endTime - startTime;
-
-                let generatedText = '';
-                if (Array.isArray(result)) {
-                    generatedText = result[0]?.generated_text || result[0]?.text || '';
-                } else if (typeof result === 'object') {
-                    generatedText = result.generated_text || result.text || JSON.stringify(result);
-                } else {
-                    generatedText = String(result);
-                }
-
-                if (generatedText.startsWith(prompt)) {
-                    generatedText = generatedText.substring(prompt.length).trim();
-                }
-
-                updateProgress(100);
-                updateFSM('SINTESI');
-
-                // Simulate token streaming for visualization
-                const tokens = generatedText.split(' ');
-                for (let i = 0; i < tokens.length; i++) {
-                    const token = tokens[i] + ' ';
-                    handleToken(token);
-                    await new Promise(r => setTimeout(r, 30)); // Simulate streaming delay
-                }
-
-                const ttft = Math.round(latency);
-                metricTtft.innerHTML = `${ttft} <span class="unit">ms</span>`;
-                
-                log('Inferenza cloud completata.', 'success');
-            } catch (error) {
-                log(`Errore inferenza cloud: ${error.message}`, 'error');
-                progressBar.style.background = '#f87171';
-            } finally {
-                isGenerating = false;
-                promptInput.disabled = false;
-                btnExecute.disabled = false;
-                promptInput.focus();
-                updateProgress(0);
-            }
-        }
-
-        // ---- Modified inference handler ----
-        async function runInference() {
-            if (selectedHfModel) {
-                await runWebInference();
-            } else if (kernel) {
-                await runLocalInference();
-            } else {
-                log('Seleziona un modello o carica un file GGUF', 'error');
-            }
-        }
-
-        async function runLocalInference() {
-            if (isGenerating || !modelLoaded || !kernel) return;
-            const prompt = promptInput.value.trim();
-            if (!prompt) return;
-
-            isGenerating = true;
-            promptInput.disabled = true;
-            btnExecute.disabled = true;
-            tokenCount = 0;
-            firstTokenTime = 0;
-            startTime = performance.now();
-            metricTtft.innerHTML = '0 <span class="unit">ms</span>';
-            metricTps.innerHTML = '0.00 <span class="unit">tok/sec</span>';
-            updateProgress(0);
-            const old = terminal.querySelector('.token-bucket');
-            if (old) old.remove();
-            log(`Utente (Locale): ${prompt}`);
-
-            try {
-                await kernel.submitInference(prompt, (token, metrics) => {
-                    handleToken(token);
-                    if (metrics) {
-                        const layer = metrics.layer;
-                        if (layer !== undefined) updateLayers([layer]);
-                        const p = Math.min(100, (tokenCount / 200) * 80 + 20);
-                        updateProgress(p);
+                        log(`Trovati ${models.length} modelli`, 'success');
+                    } catch (error) {
+                        log(`Errore ricerca: ${error.message}`, 'error');
+                        searchResults.innerHTML = '<div style="padding:0.5rem; color:#f87171;">Errore nella ricerca</div>';
                     }
                 });
-                updateProgress(100);
-                log('Inferenza locale completata.', 'success');
-            } catch (err) {
-                log(`Errore inferenza: ${err.message}`, 'error');
-                progressBar.style.background = '#f87171';
-            } finally {
-                isGenerating = false;
+
+                modelSearch.addEventListener('keydown', e => {
+                    if (e.key === 'Enter') btnSearch.click();
+                });
+            }
+
+            function selectHfModel(modelId) {
+                selectedHfModel = modelId;
+                selectedModel.style.display = 'block';
+                selectedModel.textContent = `🤖 ${modelId}`;
+                searchResults.style.display = 'none';
+                modelSearch.value = '';
+                log(`Modello selezionato: ${modelId}`, 'success');
+                
+                // Enable inference with web engine
+                modelLoaded = true;
                 promptInput.disabled = false;
                 btnExecute.disabled = false;
-                promptInput.focus();
+                promptInput.placeholder = 'Inserisci il prompt per inferenza cloud...';
+                badgeHw.textContent = 'HF Cloud';
+                statusIndicator.style.boxShadow = '0 0 12px #00ffcc';
             }
-        }
 
-        // ---- Hardware fallback (prima del caricamento moduli) ----
-        (async function detectFallback() {
-            if (navigator.gpu) {
+            // ---- Web Inference Integration ----
+            async function runWebInference() {
+                if (isGenerating || !selectedHfModel) return;
+                const prompt = promptInput.value.trim();
+                if (!prompt) return;
+
+                isGenerating = true;
+                promptInput.disabled = true;
+                btnExecute.disabled = true;
+                tokenCount = 0;
+                firstTokenTime = 0;
+                startTime = performance.now();
+                metricTtft.innerHTML = '0 <span class="unit">ms</span>';
+                metricTps.innerHTML = '0.00 <span class="unit">tok/sec</span>';
+                updateProgress(0);
+                const old = terminal.querySelector('.token-bucket');
+                if (old) old.remove();
+                log(`Utente (Cloud): ${prompt}`);
+
                 try {
-                    const adapter = await navigator.gpu.requestAdapter();
-                    if (adapter) badgeHw.textContent = 'WebGPU';
-                } catch (_) {}
-            } else if (navigator.ml) {
-                badgeHw.textContent = 'WebNN (NPU)';
-            } else {
-                badgeHw.textContent = 'WASM SIMD';
+                    const apiKey = hfApiKey.value.trim();
+                    const headers = {
+                        'Content-Type': 'application/json'
+                    };
+
+                    if (apiKey) {
+                        headers['Authorization'] = `Bearer ${apiKey}`;
+                    }
+
+                    const body = {
+                        inputs: prompt,
+                        parameters: {
+                            temperature: 0.7,
+                            max_new_tokens: 200,
+                            top_p: 0.95,
+                            return_full_text: false
+                        }
+                    };
+
+                    updateFSM('ANALISI');
+                    updateProgress(20);
+
+                    const response = await fetch(
+                        `https://api-inference.huggingface.co/models/${selectedHfModel}`,
+                        {
+                            method: 'POST',
+                            headers,
+                            body: JSON.stringify(body)
+                        }
+                    );
+
+                    updateFSM('HARDWARE');
+                    updateProgress(50);
+
+                    if (!response.ok) {
+                        const errorText = await response.text();
+                        throw new Error(`Inference failed: ${response.statusText} - ${errorText}`);
+                    }
+
+                    const result = await response.json();
+                    const endTime = performance.now();
+                    const latency = endTime - startTime;
+
+                    let generatedText = '';
+                    if (Array.isArray(result)) {
+                        generatedText = result[0]?.generated_text || result[0]?.text || '';
+                    } else if (typeof result === 'object') {
+                        generatedText = result.generated_text || result.text || JSON.stringify(result);
+                    } else {
+                        generatedText = String(result);
+                    }
+
+                    if (generatedText.startsWith(prompt)) {
+                        generatedText = generatedText.substring(prompt.length).trim();
+                    }
+
+                    updateProgress(100);
+                    updateFSM('SINTESI');
+
+                    // Simulate token streaming for visualization
+                    const tokens = generatedText.split(' ');
+                    for (let i = 0; i < tokens.length; i++) {
+                        const token = tokens[i] + ' ';
+                        handleToken(token);
+                        await new Promise(r => setTimeout(r, 30)); // Simulate streaming delay
+                    }
+
+                    const ttft = Math.round(latency);
+                    metricTtft.innerHTML = `${ttft} <span class="unit">ms</span>`;
+                    
+                    log('Inferenza cloud completata.', 'success');
+                } catch (error) {
+                    log(`Errore inferenza cloud: ${error.message}`, 'error');
+                    progressBar.style.background = '#f87171';
+                } finally {
+                    isGenerating = false;
+                    promptInput.disabled = false;
+                    btnExecute.disabled = false;
+                    promptInput.focus();
+                    updateProgress(0);
+                }
             }
-        })();
 
-        log('Ouroboros UI pronta. Trascina un file GGUF o cerca un modello Hugging Face per iniziare.');
-        console.log('Ouroboros UI avviata.');
+            // ---- Modified inference handler ----
+            async function runInference() {
+                if (selectedHfModel) {
+                    await runWebInference();
+                } else if (kernel) {
+                    await runLocalInference();
+                } else {
+                    log('Seleziona un modello o carica un file GGUF', 'error');
+                }
+            }
 
-        // ---- Register Service Worker ----
-        if ('serviceWorker' in navigator) {
-            window.addEventListener('load', () => {
-                navigator.serviceWorker.register('./sw.js')
-                    .then(registration => {
-                        console.log('SW registered:', registration);
-                    })
-                    .catch(error => {
-                        console.log('SW registration failed:', error);
+            async function runLocalInference() {
+                if (isGenerating || !modelLoaded || !kernel) return;
+                const prompt = promptInput.value.trim();
+                if (!prompt) return;
+
+                isGenerating = true;
+                promptInput.disabled = true;
+                btnExecute.disabled = true;
+                tokenCount = 0;
+                firstTokenTime = 0;
+                startTime = performance.now();
+                metricTtft.innerHTML = '0 <span class="unit">ms</span>';
+                metricTps.innerHTML = '0.00 <span class="unit">tok/sec</span>';
+                updateProgress(0);
+                const old = terminal.querySelector('.token-bucket');
+                if (old) old.remove();
+                log(`Utente (Locale): ${prompt}`);
+
+                try {
+                    await kernel.submitInference(prompt, (token, metrics) => {
+                        handleToken(token);
+                        if (metrics) {
+                            const layer = metrics.layer;
+                            if (layer !== undefined) updateLayers([layer]);
+                            const p = Math.min(100, (tokenCount / 200) * 80 + 20);
+                            updateProgress(p);
+                        }
                     });
-            });
+                    updateProgress(100);
+                    log('Inferenza locale completata.', 'success');
+                } catch (err) {
+                    log(`Errore inferenza: ${err.message}`, 'error');
+                    progressBar.style.background = '#f87171';
+                } finally {
+                    isGenerating = false;
+                    promptInput.disabled = false;
+                    btnExecute.disabled = false;
+                    promptInput.focus();
+                }
+            }
+
+            // ---- Hardware fallback (prima del caricamento moduli) ----
+            (async function detectFallback() {
+                if (navigator.gpu) {
+                    try {
+                        const adapter = await navigator.gpu.requestAdapter();
+                        if (adapter) badgeHw.textContent = 'WebGPU';
+                    } catch (_) {}
+                } else if (navigator.ml) {
+                    badgeHw.textContent = 'WebNN (NPU)';
+                } else {
+                    badgeHw.textContent = 'WASM SIMD';
+                }
+            })();
+
+            log('Ouroboros UI pronta. Trascina un file GGUF o cerca un modello Hugging Face per iniziare.');
+            console.log('Ouroboros UI avviata.');
+
+            // ---- Register Service Worker ----
+            if ('serviceWorker' in navigator) {
+                window.addEventListener('load', () => {
+                    navigator.serviceWorker.register('./sw.js')
+                        .then(registration => {
+                            console.log('SW registered:', registration);
+                        })
+                        .catch(error => {
+                            console.log('SW registration failed:', error);
+                        });
+                });
+            }
         }
     </script>
 </body>
