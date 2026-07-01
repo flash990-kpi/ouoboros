@@ -1,0 +1,1 @@
+{"root":["./kernel/scheduler.ts","./kernel/statemachine.ts","./asts/sparsitypredictor.ts","./asts/topologyparser.ts","./asts/weightsynthesizer.ts","./hw/auditor.ts","./hw/wasm_driver.ts","./hw/webgpu_driver.ts","./hw/webnn_driver.ts","./io/ggufstreamer.ts"],"version":"6.0.3"}

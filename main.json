@@ -1,0 +1,185 @@
+// main.js – Entry point dell'applicazione Ouroboros
+
+import { HardwareAuditor } from './hw/auditor.js';
+import { WebGpuDriver } from './hw/webgpu_driver.js';
+import { WebNnDriver } from './hw/webnn_driver.js';
+import { WasmDriver } from './hw/wasm_driver.js';
+import { GgufStreamer } from './io/ggufStreamer.js';
+import { TopologyParser } from './asts/topologyParser.js';
+import { SparsityPredictor } from './asts/sparsityPredictor.js';
+import { WeightSynthesizer } from './asts/weightSynthesizer.js';
+import { OuroborosKernel } from './kernel/stateMachine.js';
+import { Scheduler } from './kernel/scheduler.js';
+
+// Riferimenti UI (dal DOM)
+const statusEl = document.getElementById('status-message');
+const progressBar = document.getElementById('global-progress-bar');
+const progressText = document.getElementById('progress-text');
+const logContainer = document.getElementById('terminal-log-flow');
+const promptInput = document.getElementById('prompt-input');
+const submitBtn = document.getElementById('btn-submit-run');
+const loadBtn = document.getElementById('btn-load-model');
+const badge = document.getElementById('active-layer-badge');
+
+// Stato
+let kernel = null;
+let currentStreamer = null;
+
+// Helper per aggiornare la UI
+function updateProgress(value, message) {
+    progressBar.style.width = `${value}%`;
+    progressText.innerText = `${value}%`;
+    if (message) statusEl.innerText = message.toUpperCase();
+}
+
+function appendSystemMessage(text) {
+    const block = document.createElement('div');
+    block.className = "p-3 rounded-lg border bg-indigo-950/10 border-indigo-900/30 text-cyan-300 mr-auto text-left max-w-[90%]";
+    block.innerHTML = `<div class="text-[9px] text-zinc-500 mb-1">${new Date().toLocaleTimeString()}</div><p class="leading-relaxed text-[12px]">${text}</p>`;
+    logContainer.appendChild(block);
+    logContainer.scrollTop = logContainer.scrollHeight;
+}
+
+function appendUserMessage(text) {
+    const block = document.createElement('div');
+    block.className = "p-3 rounded-lg border bg-zinc-900/30 border-zinc-800 text-zinc-200 ml-auto text-right items-end max-w-[90%]";
+    block.innerHTML = `<div class="text-[9px] text-zinc-500 mb-1">${new Date().toLocaleTimeString()}</div><p class="leading-relaxed text-[12px]">${text}</p>`;
+    logContainer.appendChild(block);
+    logContainer.scrollTop = logContainer.scrollHeight;
+}
+
+function createOutputBlock() {
+    const block = document.createElement('div');
+    block.className = "p-3 rounded-lg border bg-indigo-950/10 border-indigo-900/30 text-cyan-300 mr-auto text-left max-w-[90%] flex flex-col gap-1.5";
+    block.innerHTML = `
+        <div class="text-[9px] text-zinc-500">${new Date().toLocaleTimeString()}</div>
+        <p class="text-node whitespace-pre-wrap leading-relaxed tracking-wide text-[12px]"></p>
+        <span class="layer-node hidden text-[9px] text-purple-400/70 border-t border-purple-900/20 pt-1 mt-1 block"></span>
+    `;
+    logContainer.appendChild(block);
+    logContainer.scrollTop = logContainer.scrollHeight;
+    return block;
+}
+
+// 1. Caricamento del modello GGUF
+loadBtn.addEventListener('click', async () => {
+    try {
+        // Apri il file picker per selezionare il GGUF
+        const [fileHandle] = await window.showOpenFilePicker({
+            types: [{ accept: { 'application/octet-stream': ['.gguf'] } }]
+        });
+        const file = await fileHandle.getFile();
+
+        // Aggiorna UI
+        updateProgress(5, 'FILE SELEZIONATO');
+
+        // Crea lo streamer
+        const source = { type: 'LOCAL', fileObject: file };
+        currentStreamer = new GgufStreamer(source);
+
+        // Genera la topologia (.ouro) dall'header del GGUF
+        updateProgress(20, 'GENERAZIONE INDICE TOPOLOGICO...');
+        const ouroBuffer = await currentStreamer.generateTopologyFromGguf();
+
+        // Crea il kernel
+        const scheduler = new Scheduler();
+        // Il kernel si aspetta un notificatore di stato
+        const stateNotifier = (state, payload) => {
+            console.log('Kernel state:', state, payload);
+            if (state === 'IDLE') {
+                updateProgress(100, 'PRONTO');
+                promptInput.disabled = false;
+                submitBtn.disabled = false;
+                statusEl.innerText = 'MODELLO PRONTO (STREAMING)';
+                appendSystemMessage('Kernel in IDLE. Pronto per l\'inferenza.');
+            }
+            if (state === 'ANALYSIS') {
+                appendSystemMessage('Analisi geometrica del prompt...');
+            }
+            if (state === 'SYNTHESIS') {
+                appendSystemMessage(`Sintesi del tensore ${payload?.hash || ''} (${payload?.index}/${payload?.total})`);
+            }
+            if (state === 'EXECUTION') {
+                badge.innerText = `Active Map Layer: ${payload?.layer || 'N/A'}`;
+                badge.classList.remove('hidden');
+            }
+            if (state === 'ERROR') {
+                appendSystemMessage(`ERRORE: ${payload?.reason || 'sconosciuto'}`);
+                updateProgress(0, 'ERRORE');
+                promptInput.disabled = false;
+                submitBtn.disabled = false;
+            }
+        };
+
+        kernel = new OuroborosKernel(stateNotifier);
+
+        // Boot del kernel (passa lo streamer e il buffer .ouro)
+        await kernel.boot(source, ouroBuffer);
+
+        // Rimuovi eventuale empty state
+        const emptyState = logContainer.querySelector('.id-empty-state');
+        if (emptyState) emptyState.remove();
+
+        appendSystemMessage('Kernel avviato. Attendi il caricamento dei driver hardware...');
+
+    } catch (err) {
+        console.error(err);
+        alert(`Errore caricamento modello: ${err.message}`);
+        updateProgress(0, 'ERRORE');
+    }
+});
+
+// 2. Invio del prompt
+document.getElementById('console-prompt-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const promptText = promptInput.value.trim();
+    if (!promptText || !kernel) return;
+
+    // Disabilita input durante l'inferenza
+    promptInput.disabled = true;
+    submitBtn.disabled = true;
+    promptInput.value = '';
+
+    appendUserMessage(promptText);
+
+    // Prepara blocco di output
+    const outputBlock = createOutputBlock();
+    const textNode = outputBlock.querySelector('.text-node');
+    const layerNode = outputBlock.querySelector('.layer-node');
+
+    // Avvia l'inferenza
+    try {
+        await kernel.submitInference(promptText, (token, metrics) => {
+            // Riceviamo un token alla volta
+            textNode.textContent += token;
+            if (metrics) {
+                layerNode.textContent = `Layers Attivi: [${metrics.layer}] Rank: ${metrics.rank} Comp: ${metrics.compression.toFixed(2)}`;
+                layerNode.classList.remove('hidden');
+            }
+            // Scroll
+            logContainer.scrollTop = logContainer.scrollHeight;
+        });
+
+        // Una volta finito, riabilita input
+        promptInput.disabled = false;
+        submitBtn.disabled = false;
+        updateProgress(0, 'PRONTO');
+        appendSystemMessage('Inferenza completata.');
+    } catch (err) {
+        console.error(err);
+        appendSystemMessage(`ERRORE INFERENZA: ${err.message}`);
+        promptInput.disabled = false;
+        submitBtn.disabled = false;
+        updateProgress(0, 'ERRORE');
+    }
+});
+
+// 3. Aggiornamenti UI per gli slider (opzionale)
+document.getElementById('param-temp').addEventListener('input', (e) => {
+    document.getElementById('val-display-temp').innerText = e.target.value;
+});
+document.getElementById('param-tokens').addEventListener('input', (e) => {
+    document.getElementById('val-display-tokens').innerText = e.target.value;
+});
+
+console.log('Ouroboros Kernel ready.');
