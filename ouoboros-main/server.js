@@ -26,6 +26,8 @@ const MIME_TYPES = {
 const server = http.createServer((req, res) => {
     let urlPath = req.url.split('?')[0];
 
+    console.log(`[SERVER] Request: ${req.method} ${urlPath}`);
+
     // Se la richiesta è per la root, serviamo index.html dalla root
     let filePath;
     if (urlPath === '/') {
@@ -39,11 +41,14 @@ const server = http.createServer((req, res) => {
         filePath = '.' + urlPath;
     }
 
+    console.log(`[SERVER] Serving file: ${filePath}`);
+
     const extname = path.extname(filePath);
     const contentType = MIME_TYPES[extname] || 'application/octet-stream';
 
     fs.readFile(filePath, (error, content) => {
         if (error) {
+            console.error(`[SERVER] Error reading file: ${error.code} - ${filePath}`);
             if (error.code === 'ENOENT') {
                 res.writeHead(404, { 'Content-Type': 'text/plain' });
                 res.end('404: File non trovato', 'utf-8');
