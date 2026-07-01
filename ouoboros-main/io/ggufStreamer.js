@@ -130,7 +130,7 @@ export class GgufStreamer {
     
     // Parser personalizzato per header GGUF
     async readGgufHeader(file) {
-        const headerSize = 1024 * 1024; // 1MB per header
+        const headerSize = 10 * 1024 * 1024; // 10MB per header (aumentato per file grandi)
         const headerBuffer = await this.readLocalSlice(0, headerSize);
         const view = new DataView(headerBuffer);
         
@@ -148,41 +148,90 @@ export class GgufStreamer {
         
         let offset = 16;
         
-        // Skip metadata key-value pairs
+        // Skip metadata key-value pairs con controllo bounds
         for (let i = 0; i < metadataKVCount; i++) {
+            if (offset + 4 > headerBuffer.byteLength) {
+                console.warn(`[GGUF] Header too small for metadata, stopping at ${i}/${metadataKVCount}`);
+                break;
+            }
+            
             const keyLen = view.getUint32(offset, true);
             offset += 4;
-            const keyBytes = new Uint8Array(headerBuffer, offset, keyLen);
+            
+            if (offset + keyLen > headerBuffer.byteLength) {
+                console.warn(`[GGUF] Header too small for key, stopping at ${i}/${metadataKVCount}`);
+                break;
+            }
             offset += keyLen;
             
+            if (offset + 4 > headerBuffer.byteLength) {
+                console.warn(`[GGUF] Header too small for type, stopping at ${i}/${metadataKVCount}`);
+                break;
+            }
             const type = view.getUint32(offset, true);
             offset += 4;
             
             // Skip value based on type
-            offset = this.skipGgufValue(view, offset, type);
+            try {
+                offset = this.skipGgufValue(view, offset, type, headerBuffer.byteLength);
+            } catch (e) {
+                console.warn(`[GGUF] Error skipping value type ${type}: ${e.message}`);
+                break;
+            }
+            
+            if (offset >= headerBuffer.byteLength) {
+                console.warn(`[GGUF] Header exhausted, stopping at ${i}/${metadataKVCount}`);
+                break;
+            }
         }
         
-        // Read tensor info
+        // Read tensor info con controllo bounds
         const tensors = [];
         for (let i = 0; i < tensorCount; i++) {
+            if (offset + 4 > headerBuffer.byteLength) {
+                console.warn(`[GGUF] Header too small for tensor info, stopping at ${i}/${tensorCount}`);
+                break;
+            }
+            
             const nameLen = view.getUint32(offset, true);
             offset += 4;
+            
+            if (offset + nameLen > headerBuffer.byteLength) {
+                console.warn(`[GGUF] Header too small for tensor name, stopping at ${i}/${tensorCount}`);
+                break;
+            }
             const nameBytes = new Uint8Array(headerBuffer, offset, nameLen);
             const name = new TextDecoder().decode(nameBytes);
             offset += nameLen;
             
+            if (offset + 4 > headerBuffer.byteLength) {
+                console.warn(`[GGUF] Header too small for nDims, stopping at ${i}/${tensorCount}`);
+                break;
+            }
             const nDims = view.getUint32(offset, true);
             offset += 4;
             
             const shape = [];
             for (let j = 0; j < nDims; j++) {
+                if (offset + 4 > headerBuffer.byteLength) {
+                    console.warn(`[GGUF] Header too small for shape, stopping at ${i}/${tensorCount}`);
+                    break;
+                }
                 shape.push(view.getUint32(offset, true));
                 offset += 4;
             }
             
+            if (offset + 4 > headerBuffer.byteLength) {
+                console.warn(`[GGUF] Header too small for dtype, stopping at ${i}/${tensorCount}`);
+                break;
+            }
             const dtype = view.getUint32(offset, true);
             offset += 4;
             
+            if (offset + 8 > headerBuffer.byteLength) {
+                console.warn(`[GGUF] Header too small for offset, stopping at ${i}/${tensorCount}`);
+                break;
+            }
             const offsetLow = view.getUint32(offset, true);
             offset += 4;
             const offsetHigh = view.getUint32(offset, true);
@@ -197,6 +246,8 @@ export class GgufStreamer {
             });
         }
         
+        console.log(`[GGUF] Parsed ${tensors.length} tensors`);
+        
         return {
             version,
             tensorCount,
@@ -204,7 +255,7 @@ export class GgufStreamer {
         };
     }
     
-    skipGgufValue(view, offset, type) {
+    skipGgufValue(view, offset, type, maxOffset) {
         switch (type) {
             case 0: // UINT8
                 return offset + 1;
@@ -233,15 +284,17 @@ export class GgufStreamer {
             case 12: // BOOL
                 return offset + 1;
             case 13: // STRING
+                if (offset + 4 > maxOffset) throw new Error('String length out of bounds');
                 const len = view.getUint32(offset, true);
                 return offset + 4 + len;
             case 14: // ARRAY
+                if (offset + 8 > maxOffset) throw new Error('Array header out of bounds');
                 const arrayLen = view.getUint32(offset, true);
                 offset += 4;
                 const arrayType = view.getUint32(offset, true);
                 offset += 4;
                 for (let i = 0; i < arrayLen; i++) {
-                    offset = this.skipGgufValue(view, offset, arrayType);
+                    offset = this.skipGgufValue(view, offset, arrayType, maxOffset);
                 }
                 return offset;
             default:
