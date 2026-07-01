@@ -1,0 +1,489 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ouroboros A.S.T.S. Console</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Courier New', monospace;
+            background: linear-gradient(135deg, #1e1e2e 0%, #2d2d44 100%);
+            color: #e0e0e0;
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        header {
+            text-align: center;
+            margin-bottom: 30px;
+            border-bottom: 2px solid #4a9eff;
+            padding-bottom: 20px;
+        }
+
+        h1 {
+            color: #4a9eff;
+            font-size: 2.5em;
+            margin-bottom: 10px;
+            text-shadow: 0 0 10px rgba(74, 158, 255, 0.5);
+        }
+
+        .subtitle {
+            color: #888;
+            font-size: 0.9em;
+        }
+
+        .dashboard {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+
+        .panel {
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid #4a9eff;
+            border-radius: 8px;
+            padding: 20px;
+            backdrop-filter: blur(10px);
+        }
+
+        .panel h2 {
+            color: #4a9eff;
+            margin-bottom: 15px;
+            font-size: 1.2em;
+        }
+
+        .status-grid {
+            display: grid;
+            gap: 10px;
+        }
+
+        .status-item {
+            display: flex;
+            justify-content: space-between;
+            padding: 8px;
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 4px;
+        }
+
+        .status-label {
+            color: #888;
+        }
+
+        .status-value {
+            color: #4a9eff;
+            font-weight: bold;
+        }
+
+        .control-section {
+            grid-column: 1 / -1;
+        }
+
+        .input-group {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            margin-bottom: 15px;
+        }
+
+        label {
+            color: #4a9eff;
+            font-size: 0.9em;
+            font-weight: bold;
+        }
+
+        input[type="text"],
+        input[type="number"],
+        textarea,
+        select {
+            background: rgba(0, 0, 0, 0.5);
+            border: 1px solid #4a9eff;
+            color: #e0e0e0;
+            padding: 10px;
+            border-radius: 4px;
+            font-family: 'Courier New', monospace;
+        }
+
+        input[type="text"]:focus,
+        input[type="number"]:focus,
+        textarea:focus,
+        select:focus {
+            outline: none;
+            border-color: #7bc3ff;
+            box-shadow: 0 0 5px rgba(74, 158, 255, 0.5);
+        }
+
+        textarea {
+            resize: vertical;
+            min-height: 100px;
+        }
+
+        .button-group {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 15px;
+        }
+
+        button {
+            flex: 1;
+            padding: 12px;
+            background: linear-gradient(135deg, #4a9eff 0%, #2d7acc 100%);
+            border: none;
+            color: white;
+            border-radius: 4px;
+            cursor: pointer;
+            font-weight: bold;
+            transition: all 0.3s ease;
+            font-family: 'Courier New', monospace;
+        }
+
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(74, 158, 255, 0.4);
+        }
+
+        button:active {
+            transform: translateY(0);
+        }
+
+        button:disabled {
+            background: #666;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .output-panel {
+            grid-column: 1 / -1;
+        }
+
+        .output-box {
+            background: rgba(0, 0, 0, 0.5);
+            border: 1px solid #4a9eff;
+            border-radius: 4px;
+            padding: 15px;
+            min-height: 200px;
+            max-height: 400px;
+            overflow-y: auto;
+            color: #4a9eff;
+            line-height: 1.6;
+        }
+
+        .output-box::-webkit-scrollbar {
+            width: 8px;
+        }
+
+        .output-box::-webkit-scrollbar-track {
+            background: rgba(0, 0, 0, 0.3);
+        }
+
+        .output-box::-webkit-scrollbar-thumb {
+            background: #4a9eff;
+            border-radius: 4px;
+        }
+
+        .token {
+            display: inline;
+            animation: fadeIn 0.1s ease;
+        }
+
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+            }
+            to {
+                opacity: 1;
+            }
+        }
+
+        .loading {
+            display: inline-block;
+            animation: pulse 1.5s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% {
+                opacity: 1;
+            }
+            50% {
+                opacity: 0.5;
+            }
+        }
+
+        .error {
+            color: #ff6b6b;
+            padding: 10px;
+            background: rgba(255, 107, 107, 0.1);
+            border: 1px solid #ff6b6b;
+            border-radius: 4px;
+            margin-top: 10px;
+        }
+
+        .success {
+            color: #51cf66;
+            padding: 10px;
+            background: rgba(81, 207, 102, 0.1);
+            border: 1px solid #51cf66;
+            border-radius: 4px;
+            margin-top: 10px;
+        }
+
+        .stat-bar {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .stat-bar .bar {
+            flex: 1;
+            height: 6px;
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 3px;
+            overflow: hidden;
+        }
+
+        .stat-bar .fill {
+            height: 100%;
+            background: linear-gradient(90deg, #4a9eff 0%, #7bc3ff 100%);
+            width: 0%;
+            transition: width 0.3s ease;
+        }
+
+        @media (max-width: 768px) {
+            .dashboard {
+                grid-template-columns: 1fr;
+            }
+
+            h1 {
+                font-size: 1.8em;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>⚡ Ouroboros A.S.T.S.</h1>
+            <p class="subtitle">Adaptive Sparse Topology Synthesis Console</p>
+        </header>
+
+        <div class="dashboard">
+            <!-- Hardware Status -->
+            <div class="panel">
+                <h2>Hardware Profile</h2>
+                <div class="status-grid">
+                    <div class="status-item">
+                        <span class="status-label">Backend:</span>
+                        <span class="status-value" id="backend">-</span>
+                    </div>
+                    <div class="status-item">
+                        <span class="status-label">Device:</span>
+                        <span class="status-value" id="device">-</span>
+                    </div>
+                    <div class="status-item">
+                        <span class="status-label">Thermal Risk:</span>
+                        <span class="status-value" id="thermal">-</span>
+                    </div>
+                    <div class="status-item">
+                        <span class="status-label">Tokens/Sec:</span>
+                        <span class="status-value" id="tps">-</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Model Topology -->
+            <div class="panel">
+                <h2>Model Topology</h2>
+                <div class="status-grid">
+                    <div class="status-item">
+                        <span class="status-label">Layers:</span>
+                        <span class="status-value" id="layers">-</span>
+                    </div>
+                    <div class="status-item">
+                        <span class="status-label">Parameters:</span>
+                        <span class="status-value" id="parameters">-</span>
+                    </div>
+                    <div class="status-item">
+                        <span class="status-label">Compression:</span>
+                        <span class="status-value" id="compression">-</span>
+                    </div>
+                    <div class="status-item">
+                        <span class="status-label">State:</span>
+                        <span class="status-value" id="state">IDLE</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Control Panel -->
+            <div class="panel control-section">
+                <h2>Inference Control</h2>
+
+                <div class="input-group">
+                    <label>Prompt</label>
+                    <textarea id="prompt" placeholder="Enter your prompt here...">What is the meaning of life?</textarea>
+                </div>
+
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+                    <div class="input-group">
+                        <label>Max Tokens</label>
+                        <input type="number" id="maxTokens" value="128" min="1" max="2048">
+                    </div>
+                    <div class="input-group">
+                        <label>Temperature</label>
+                        <input type="number" id="temperature" value="0.7" min="0" max="2" step="0.1">
+                    </div>
+                </div>
+
+                <div class="button-group">
+                    <button id="initBtn" onclick="initializeAPI()">Initialize</button>
+                    <button id="generateBtn" onclick="generateText()" disabled>Generate</button>
+                    <button id="disposeBtn" onclick="disposeAPI()" disabled>Dispose</button>
+                </div>
+
+                <div id="message"></div>
+            </div>
+
+            <!-- Output Panel -->
+            <div class="panel output-panel">
+                <h2>Output</h2>
+                <div class="output-box" id="output">Ready for inference...</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const output = document.getElementById('output');
+        const initBtn = document.getElementById('initBtn');
+        const generateBtn = document.getElementById('generateBtn');
+        const disposeBtn = document.getElementById('disposeBtn');
+        const messageDiv = document.getElementById('message');
+        let initialized = false;
+
+        async function initializeAPI() {
+            try {
+                initBtn.disabled = true;
+                messageDiv.innerHTML = '<div class="loading">Initializing...</div>';
+
+                const response = await fetch('/api/init', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        modelPath: './models/model.gguf',
+                    }),
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    initialized = true;
+                    generateBtn.disabled = false;
+                    disposeBtn.disabled = false;
+                    messageDiv.innerHTML = '<div class="success">✓ A.S.T.S. Core Initialized</div>';
+
+                    const status = data.status;
+                    document.getElementById('backend').textContent = status.hardware?.primary?.backend || '-';
+                    document.getElementById('device').textContent = status.hardware?.primary?.deviceName || '-';
+                    document.getElementById('thermal').textContent = status.hardware?.thermalThrottlingRisk || '-';
+                    document.getElementById('tps').textContent = status.hardware?.estimatedTokensPerSecond || '-';
+
+                    if (status.topology) {
+                        document.getElementById('layers').textContent = status.topology.totalLayers;
+                        document.getElementById('parameters').textContent = (status.topology.totalParameters / 1e9).toFixed(2) + 'B';
+                        document.getElementById('compression').textContent = status.topology.compressionRatio.toFixed(2) + 'x';
+                    }
+                } else {
+                    messageDiv.innerHTML = '<div class="error">✗ ' + data.error + '</div>';
+                    initBtn.disabled = false;
+                }
+            } catch (error) {
+                messageDiv.innerHTML = '<div class="error">✗ Error: ' + error.message + '</div>';
+                initBtn.disabled = false;
+            }
+        }
+
+        async function generateText() {
+            if (!initialized) return;
+
+            const prompt = document.getElementById('prompt').value;
+            const maxTokens = parseInt(document.getElementById('maxTokens').value);
+
+            if (!prompt) {
+                messageDiv.innerHTML = '<div class="error">✗ Prompt is required</div>';
+                return;
+            }
+
+            try {
+                generateBtn.disabled = true;
+                output.innerHTML = '<span class="loading">Generating...</span>';
+                document.getElementById('state').textContent = 'GENERATING';
+
+                const response = await fetch('/api/generate', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ prompt, maxTokens }),
+                });
+
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+                output.innerHTML = '';
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+
+                    const text = decoder.decode(value);
+                    const lines = text.split('\n');
+
+                    for (const line of lines) {
+                        if (line.startsWith('data: ')) {
+                            const data = JSON.parse(line.substring(6));
+                            if (data.done) {
+                                document.getElementById('state').textContent = 'COMPLETE';
+                            } else if (data.token) {
+                                const span = document.createElement('span');
+                                span.className = 'token';
+                                span.textContent = data.token;
+                                output.appendChild(span);
+                                output.scrollTop = output.scrollHeight;
+                            }
+                        }
+                    }
+                }
+
+                generateBtn.disabled = false;
+                messageDiv.innerHTML = '<div class="success">✓ Generation complete</div>';
+            } catch (error) {
+                messageDiv.innerHTML = '<div class="error">✗ Error: ' + error.message + '</div>';
+                generateBtn.disabled = false;
+            }
+        }
+
+        async function disposeAPI() {
+            try {
+                disposeBtn.disabled = true;
+                await fetch('/api/dispose', { method: 'POST' });
+                initialized = false;
+                generateBtn.disabled = true;
+                disposeBtn.disabled = false;
+                initBtn.disabled = false;
+                output.innerHTML = 'Ready for inference...';
+                document.getElementById('state').textContent = 'IDLE';
+                messageDiv.innerHTML = '<div class="success">✓ A.S.T.S. Core Disposed</div>';
+            } catch (error) {
+                messageDiv.innerHTML = '<div class="error">✗ Error: ' + error.message + '</div>';
+                disposeBtn.disabled = false;
+            }
+        }
+    </script>
+</body>
+</html>
