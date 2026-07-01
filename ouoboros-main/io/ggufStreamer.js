@@ -42,18 +42,38 @@ export class GgufStreamer {
         }
     }
     
-    // Genera l'indice topologico .ouro dal file GGUF usando parser completo
+    // Genera l'indice topologico .ouro dal file GGUF usando sistema multi-parser
     async generateTopologyFromGguf() {
         const file = this.source.fileObject;
         
         try {
-            // Leggi l'header GGUF completo
-            const header = await this.readGgufHeaderComplete(file);
+            console.log('[GGUF] Starting multi-parser approach...');
+            
+            // Strategia 1: Usa @huggingface/transformers se disponibile
+            let header = null;
+            try {
+                header = await this.parseWithTransformers(file);
+                console.log('[GGUF] Transformers parser succeeded');
+            } catch (e) {
+                console.warn('[GGUF] Transformers parser failed:', e.message);
+            }
+            
+            // Strategia 2: Usa parser personalizzato se Transformers fallisce
+            if (!header || header.tensors.length === 0) {
+                console.log('[GGUF] Falling back to custom parser...');
+                header = await this.readGgufHeaderComplete(file);
+            }
+            
+            if (!header || header.tensors.length === 0) {
+                throw new Error('Nessun parser è riuscito a leggere i tensori dal file GGUF');
+            }
+            
             console.log('[GGUF] Header parsed successfully:', {
                 version: header.version,
                 tensorCount: header.tensorCount,
                 metadataKVCount: header.metadataKVCount,
-                alignment: header.alignment
+                alignment: header.alignment,
+                actualTensors: header.tensors.length
             });
             
             // Genera l'indice topologico
@@ -157,8 +177,45 @@ export class GgufStreamer {
         }
     }
     
-    // Parser GGUF completo seguendo le specifiche ufficiali
+    // Parser usando @huggingface/gguf (se disponibile)
+    async parseWithTransformers(file) {
+        try {
+            // Tenta di importare dinamicamente la libreria
+            const ggufLib = await import('@huggingface/gguf');
+            
+            // Crea un GGUF reader per leggere l'header
+            const buffer = await file.arrayBuffer();
+            const uint8Array = new Uint8Array(buffer);
+            
+            // Usa il parser GGUF
+            const gguf = await ggufLib.GGUF.from_buffer(uint8Array);
+            
+            const tensors = [];
+            for (const tensor of gguf.tensors) {
+                tensors.push({
+                    name: tensor.name,
+                    shape: tensor.shape,
+                    dtype: tensor.dtype,
+                    offset: BigInt(tensor.data_offset)
+                });
+            }
+            
+            return {
+                version: gguf.version,
+                tensorCount: gguf.tensor_count,
+                metadataKVCount: gguf.metadata_kv_count,
+                alignment: gguf.alignment || 32,
+                tensors
+            };
+        } catch (e) {
+            throw new Error(`GGUF parser non disponibile o fallito: ${e.message}`);
+        }
+    }
+    
+    // Parser GGUF completo seguendo le specifiche ufficiali con lettura dinamica
     async readGgufHeaderComplete(file) {
+        console.log('[GGUF] Starting dynamic header reading...');
+        
         // Leggi i primi 128 byte per ottenere le informazioni base
         const initialBuffer = await this.readLocalSlice(0, 128);
         const initialView = new DataView(initialBuffer);
@@ -181,140 +238,178 @@ export class GgufStreamer {
         
         console.log(`[GGUF] Version: ${version}, Tensors: ${tensorCount}, Metadata: ${metadataKVCount}, Alignment: ${alignment}`);
         
-        // Calcola dimensione header dinamica
-        // Stima: 16-20 byte base + metadata (variabile) + tensor info (variabile)
-        // Per sicurezza, leggi tutto fino a 500MB per modelli molto grandi
-        const maxHeaderSize = 500 * 1024 * 1024; // 500MB max
-        const headerBuffer = await this.readLocalSlice(0, maxHeaderSize);
-        const view = new DataView(headerBuffer);
-        
+        // Lettura dinamica dell'header: inizia con 10MB e aumenta se necessario
+        let headerSize = 10 * 1024 * 1024; // 10MB iniziale
+        let headerBuffer = null;
+        let view = null;
         let offset = version >= 3 ? 20 : 16;
         
-        // Parse metadata key-value pairs
-        const metadata = {};
-        for (let i = 0; i < metadataKVCount; i++) {
-            if (offset + 4 > headerBuffer.byteLength) {
-                console.warn(`[GGUF] Header too small for metadata KV ${i}, stopping`);
-                break;
-            }
+        // Loop per estendere il buffer se necessario
+        for (let attempt = 0; attempt < 10; attempt++) {
+            console.log(`[GGUF] Attempt ${attempt + 1}: Reading ${headerSize / 1024 / 1024}MB`);
             
-            const keyLen = view.getUint32(offset, true);
-            offset += 4;
+            headerBuffer = await this.readLocalSlice(0, headerSize);
+            view = new DataView(headerBuffer);
+            offset = version >= 3 ? 20 : 16;
             
-            if (offset + keyLen > headerBuffer.byteLength) {
-                console.warn(`[GGUF] Header too small for key at KV ${i}, stopping`);
-                break;
-            }
+            // Parse metadata key-value pairs
+            const metadata = {};
+            let metadataParsed = 0;
             
-            const keyBytes = new Uint8Array(headerBuffer, offset, keyLen);
-            const key = new TextDecoder().decode(keyBytes);
-            offset += keyLen;
-            
-            if (offset + 4 > headerBuffer.byteLength) {
-                console.warn(`[GGUF] Header too small for type at KV ${i}, stopping`);
-                break;
-            }
-            
-            const type = view.getUint32(offset, true);
-            offset += 4;
-            
-            try {
-                const { value, newOffset } = this.readGgufValue(view, offset, type, headerBuffer.byteLength);
-                metadata[key] = value;
-                offset = newOffset;
-            } catch (e) {
-                console.warn(`[GGUF] Error reading value for key '${key}': ${e.message}`);
-                break;
-            }
-            
-            if (offset >= headerBuffer.byteLength) {
-                console.warn(`[GGUF] Header exhausted at metadata KV ${i}, stopping`);
-                break;
-            }
-        }
-        
-        console.log(`[GGUF] Metadata parsed, offset now: ${offset}`);
-        
-        // Parse tensor info
-        const tensors = [];
-        for (let i = 0; i < tensorCount; i++) {
-            if (offset + 4 > headerBuffer.byteLength) {
-                console.warn(`[GGUF] Header too small for tensor ${i}, stopping`);
-                break;
-            }
-            
-            const nameLen = view.getUint32(offset, true);
-            offset += 4;
-            
-            if (offset + nameLen > headerBuffer.byteLength) {
-                console.warn(`[GGUF] Header too small for tensor name at ${i}, stopping`);
-                break;
-            }
-            
-            const nameBytes = new Uint8Array(headerBuffer, offset, nameLen);
-            const name = new TextDecoder().decode(nameBytes);
-            offset += nameLen;
-            
-            if (offset + 4 > headerBuffer.byteLength) {
-                console.warn(`[GGUF] Header too small for nDims at tensor ${i}, stopping`);
-                break;
-            }
-            
-            const nDims = view.getUint32(offset, true);
-            offset += 4;
-            
-            const shape = [];
-            for (let j = 0; j < nDims; j++) {
+            for (let i = 0; i < metadataKVCount; i++) {
                 if (offset + 4 > headerBuffer.byteLength) {
-                    console.warn(`[GGUF] Header too small for shape at tensor ${i}, stopping`);
+                    console.warn(`[GGUF] Header too small for metadata KV ${i}, need more data`);
                     break;
                 }
-                shape.push(view.getUint32(offset, true));
+                
+                const keyLen = view.getUint32(offset, true);
                 offset += 4;
+                
+                if (offset + keyLen > headerBuffer.byteLength) {
+                    console.warn(`[GGUF] Header too small for key at KV ${i}, need more data`);
+                    break;
+                }
+                
+                const keyBytes = new Uint8Array(headerBuffer, offset, keyLen);
+                const key = new TextDecoder().decode(keyBytes);
+                offset += keyLen;
+                
+                if (offset + 4 > headerBuffer.byteLength) {
+                    console.warn(`[GGUF] Header too small for type at KV ${i}, need more data`);
+                    break;
+                }
+                
+                const type = view.getUint32(offset, true);
+                offset += 4;
+                
+                try {
+                    const { value, newOffset } = this.readGgufValue(view, offset, type, headerBuffer.byteLength);
+                    metadata[key] = value;
+                    offset = newOffset;
+                    metadataParsed++;
+                } catch (e) {
+                    console.warn(`[GGUF] Error reading value for key '${key}': ${e.message}, need more data`);
+                    break;
+                }
+                
+                if (offset >= headerBuffer.byteLength) {
+                    console.warn(`[GGUF] Header exhausted at metadata KV ${i}, need more data`);
+                    break;
+                }
             }
             
-            if (offset + 4 > headerBuffer.byteLength) {
-                console.warn(`[GGUF] Header too small for dtype at tensor ${i}, stopping`);
-                break;
+            console.log(`[GGUF] Metadata parsed: ${metadataParsed}/${metadataKVCount}, offset: ${offset}`);
+            
+            // Se non abbiamo letto tutto il metadata, aumenta il buffer
+            if (metadataParsed < metadataKVCount) {
+                headerSize *= 2;
+                if (headerSize > 1024 * 1024 * 1024) { // Max 1GB
+                    console.warn('[GGUF] Reached max header size (1GB), proceeding with partial metadata');
+                    break;
+                }
+                continue;
             }
             
-            const dtype = view.getUint32(offset, true);
-            offset += 4;
+            // Parse tensor info
+            const tensors = [];
+            let tensorsParsed = 0;
             
-            if (offset + 8 > headerBuffer.byteLength) {
-                console.warn(`[GGUF] Header too small for offset at tensor ${i}, stopping`);
-                break;
+            for (let i = 0; i < tensorCount; i++) {
+                if (offset + 4 > headerBuffer.byteLength) {
+                    console.warn(`[GGUF] Header too small for tensor ${i}, need more data`);
+                    break;
+                }
+                
+                const nameLen = view.getUint32(offset, true);
+                offset += 4;
+                
+                if (offset + nameLen > headerBuffer.byteLength) {
+                    console.warn(`[GGUF] Header too small for tensor name at ${i}, need more data`);
+                    break;
+                }
+                
+                const nameBytes = new Uint8Array(headerBuffer, offset, nameLen);
+                const name = new TextDecoder().decode(nameBytes);
+                offset += nameLen;
+                
+                if (offset + 4 > headerBuffer.byteLength) {
+                    console.warn(`[GGUF] Header too small for nDims at tensor ${i}, need more data`);
+                    break;
+                }
+                
+                const nDims = view.getUint32(offset, true);
+                offset += 4;
+                
+                const shape = [];
+                for (let j = 0; j < nDims; j++) {
+                    if (offset + 4 > headerBuffer.byteLength) {
+                        console.warn(`[GGUF] Header too small for shape at tensor ${i}, need more data`);
+                        break;
+                    }
+                    shape.push(view.getUint32(offset, true));
+                    offset += 4;
+                }
+                
+                if (offset + 4 > headerBuffer.byteLength) {
+                    console.warn(`[GGUF] Header too small for dtype at tensor ${i}, need more data`);
+                    break;
+                }
+                
+                const dtype = view.getUint32(offset, true);
+                offset += 4;
+                
+                if (offset + 8 > headerBuffer.byteLength) {
+                    console.warn(`[GGUF] Header too small for offset at tensor ${i}, need more data`);
+                    break;
+                }
+                
+                const offsetLow = view.getUint32(offset, true);
+                offset += 4;
+                const offsetHigh = view.getUint32(offset, true);
+                offset += 4;
+                const tensorOffset = (BigInt(offsetHigh) << 32n) | BigInt(offsetLow);
+                
+                tensors.push({
+                    name,
+                    shape,
+                    dtype,
+                    offset: tensorOffset
+                });
+                
+                tensorsParsed++;
+                
+                // Log progress ogni 100 tensori
+                if (tensorsParsed % 100 === 0) {
+                    console.log(`[GGUF] Parsed ${tensorsParsed}/${tensorCount} tensors`);
+                }
             }
             
-            const offsetLow = view.getUint32(offset, true);
-            offset += 4;
-            const offsetHigh = view.getUint32(offset, true);
-            offset += 4;
-            const tensorOffset = (BigInt(offsetHigh) << 32n) | BigInt(offsetLow);
+            console.log(`[GGUF] Tensors parsed: ${tensorsParsed}/${tensorCount}`);
             
-            tensors.push({
-                name,
-                shape,
-                dtype,
-                offset: tensorOffset
-            });
-            
-            // Log progress ogni 100 tensori
-            if ((i + 1) % 100 === 0) {
-                console.log(`[GGUF] Parsed ${i + 1}/${tensorCount} tensors`);
+            // Se non abbiamo letto tutti i tensori, aumenta il buffer
+            if (tensorsParsed < tensorCount) {
+                headerSize *= 2;
+                if (headerSize > 1024 * 1024 * 1024) { // Max 1GB
+                    console.warn('[GGUF] Reached max header size (1GB), proceeding with partial tensors');
+                    break;
+                }
+                continue;
             }
+            
+            // Successo: abbiamo letto tutto
+            console.log(`[GGUF] Successfully parsed all ${tensorsParsed} tensors`);
+            return {
+                version,
+                tensorCount,
+                metadataKVCount,
+                alignment,
+                metadata,
+                tensors
+            };
         }
         
-        console.log(`[GGUF] Total tensors parsed: ${tensors.length}/${tensorCount}`);
-        
-        return {
-            version,
-            tensorCount,
-            metadataKVCount,
-            alignment,
-            metadata,
-            tensors
-        };
+        // Se arriviamo qui, non siamo riusciti a leggere tutto
+        throw new Error(`Impossibile leggere l'header completo dopo 10 tentativi. Letti ${tensorsParsed || 0}/${tensorCount} tensori.`);
     }
     
     // Legge un valore GGUF con tipo specificato

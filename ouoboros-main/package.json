@@ -38,7 +38,8 @@
     "typescript": "^5.0.0"
   },
   "dependencies": {
-    "commander": "^11.0.0",
-    "@huggingface/inference": "^2.6.4"
+    "@huggingface/gguf": "^0.4.2",
+    "@huggingface/inference": "^2.6.4",
+    "commander": "^11.0.0"
   }
 }
