@@ -1,0 +1,758 @@
+<!DOCTYPE html>
+<html lang="it" class="h-full">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <title>Ouroboros Core – A.S.T.S. Engine</title>
+
+    <!-- PWA (opzionale) -->
+    <link rel="manifest" href="/manifest.json" />
+    <meta name="theme-color" content="#0a0a0f" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+
+    <!-- Import map: mappa @huggingface/gguf al file locale -->
+    <script type="importmap">
+{
+    "imports": {
+        "./kernel/": "./kernel/",
+        "./hw/": "./hw/",
+        "./io/": "./io/",
+        "./asts/": "./asts/",
+        "@huggingface/gguf": "./lib/gguf.mjs",
+        "@huggingface/tasks": "https://esm.sh/@huggingface/tasks@0.12.0"
+    }
+}
+</script>
+
+    <style>
+        /* ----- RESET & BASE (tema dark neon) ----- */
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        html, body { height: 100%; background: #0a0a0f; color: #f0f0ff; }
+        body {
+            font-family: 'JetBrains Mono', 'Courier New', monospace;
+            overflow: hidden;
+            font-size: 11px;
+            display: flex;
+            flex-direction: column;
+            background: #0a0a0f;
+            -webkit-font-smoothing: antialiased;
+            user-select: none;
+        }
+
+        ::-webkit-scrollbar { width: 4px; height: 4px; }
+        ::-webkit-scrollbar-track { background: #0a0a0f; }
+        ::-webkit-scrollbar-thumb { background: #2a2a3a; border-radius: 2px; }
+        ::-webkit-scrollbar-thumb:hover { background: #00ffcc; }
+
+        /* ----- HEADER ----- */
+        .app-header {
+            background: #0a0a0f;
+            border-bottom: 1px solid #2a2a3a;
+            padding: 0.75rem 1rem;
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            justify-content: space-between;
+            flex-shrink: 0;
+            gap: 0.5rem;
+        }
+        .app-header .brand {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+        .app-header .brand .indicator {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: #00ffcc;
+            box-shadow: 0 0 8px #00ffcc;
+            flex-shrink: 0;
+            transition: box-shadow 0.3s;
+        }
+        .app-header .brand h1 {
+            font-size: 0.8rem;
+            font-weight: 700;
+            letter-spacing: 0.1em;
+            color: #f0f0ff;
+        }
+        .app-header .badges {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+            font-size: 0.6rem;
+            color: #606080;
+        }
+        .app-header .badges .badge {
+            background: #14141e;
+            border: 1px solid #2a2a3a;
+            padding: 0.2rem 0.6rem;
+            border-radius: 0.25rem;
+            display: flex;
+            align-items: center;
+            gap: 0.3rem;
+        }
+        .app-header .badges .badge .value {
+            color: #00ffcc;
+            font-weight: 700;
+            text-transform: uppercase;
+        }
+        .app-header .badges .badge .value.thermal { color: #34d399; }
+
+        /* ----- LAYOUT PRINCIPALE ----- */
+        .app-main {
+            flex: 1;
+            display: flex;
+            overflow: hidden;
+        }
+
+        /* LEFT PANEL */
+        .left-panel {
+            width: 260px;
+            min-width: 200px;
+            border-right: 1px solid #2a2a3a;
+            background: rgba(10, 10, 15, 0.8);
+            padding: 1rem;
+            display: flex;
+            flex-direction: column;
+            gap: 1.25rem;
+            overflow-y: auto;
+            flex-shrink: 0;
+        }
+        .left-panel .section-title {
+            font-size: 0.65rem;
+            font-weight: 700;
+            letter-spacing: 0.05em;
+            color: #606080;
+            text-transform: uppercase;
+            border-bottom: 1px solid rgba(42, 42, 58, 0.6);
+            padding-bottom: 0.3rem;
+            display: flex;
+            justify-content: space-between;
+        }
+        .left-panel .section-title .accent { color: #00ffcc; }
+
+        .drop-zone {
+            border: 1px dashed rgba(0, 255, 204, 0.3);
+            background: rgba(0, 255, 204, 0.03);
+            border-radius: 0.5rem;
+            padding: 0.75rem;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.2s;
+            color: #00ffcc;
+            font-weight: 700;
+            font-size: 0.65rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+        .drop-zone:hover { background: rgba(0, 255, 204, 0.08); border-color: #00ffcc; }
+        .drop-zone.dragover { background: rgba(0, 255, 204, 0.15); border-color: #00ffcc; box-shadow: 0 0 20px rgba(0,255,204,0.1); }
+        .drop-zone .sub {
+            font-weight: 400;
+            color: #606080;
+            font-size: 0.55rem;
+            margin-top: 0.2rem;
+            text-transform: none;
+        }
+        #file-status { color: #a0a0c0; font-size: 0.6rem; margin-top: 0.3rem; word-break: break-all; }
+        #file-size { color: #404060; font-size: 0.55rem; }
+        #model-info { font-size: 0.6rem; color: #606080; margin-top: 0.3rem; display: none; }
+
+        /* FSM */
+        .fsm-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr 1fr;
+            gap: 0.2rem;
+            text-align: center;
+            font-weight: 700;
+            font-size: 0.6rem;
+            letter-spacing: 0.05em;
+        }
+        .fsm-grid .fsm-item {
+            border: 1px solid #2a2a3a;
+            background: rgba(20,20,30,0.4);
+            color: #606080;
+            padding: 0.4rem 0;
+            border-radius: 0.25rem;
+            transition: all 0.15s;
+        }
+        .fsm-grid .fsm-item.active-analisi {
+            border-color: #fbbf24;
+            background: rgba(245,158,11,0.1);
+            color: #fbbf24;
+            box-shadow: 0 0 8px rgba(245,158,11,0.15);
+        }
+        .fsm-grid .fsm-item.active-sintesi {
+            border-color: #a78bfa;
+            background: rgba(167,139,250,0.1);
+            color: #a78bfa;
+            box-shadow: 0 0 8px rgba(167,139,250,0.2);
+        }
+        .fsm-grid .fsm-item.active-hardware {
+            border-color: #00ffcc;
+            background: rgba(0,255,204,0.1);
+            color: #00ffcc;
+            box-shadow: 0 0 8px rgba(0,255,204,0.2);
+        }
+
+        /* CENTER PANEL */
+        .center-panel {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            background: #11111a;
+            min-width: 0;
+        }
+        #console-terminal {
+            flex: 1;
+            padding: 0.75rem 1rem;
+            overflow-y: auto;
+            font-size: 0.7rem;
+            line-height: 1.6;
+            color: #c0c0d0;
+            background: rgba(10,10,15,0.5);
+            font-family: 'JetBrains Mono', monospace;
+        }
+        #console-terminal .sys { color: #606080; }
+        #console-terminal .success { color: #00ffcc; }
+        #console-terminal .error { color: #f87171; }
+        #console-terminal .token-bucket {
+            display: block;
+            margin-top: 0.25rem;
+            padding-left: 0.75rem;
+            border-left: 3px solid rgba(167,139,250,0.3);
+            color: #f0f0ff;
+        }
+
+        .progress-wrap {
+            padding: 0.25rem 1rem 0.5rem;
+        }
+        .progress-bar {
+            width: 100%;
+            height: 4px;
+            background: #2a2a3a;
+            border-radius: 2px;
+            overflow: hidden;
+        }
+        .progress-bar .fill {
+            height: 100%;
+            width: 0%;
+            background: #00ffcc;
+            transition: width 0.25s;
+            box-shadow: 0 0 8px #00ffcc;
+        }
+
+        .input-row {
+            display: flex;
+            gap: 0.5rem;
+            padding: 0.5rem 1rem;
+            border-top: 1px solid #2a2a3a;
+            background: rgba(20,20,30,0.3);
+        }
+        .input-row input {
+            flex: 1;
+            background: #0a0a0f;
+            border: 1px solid #2a2a3a;
+            border-radius: 0.25rem;
+            padding: 0.4rem 0.6rem;
+            color: #f0f0ff;
+            font-size: 0.65rem;
+            font-family: 'JetBrains Mono', monospace;
+            outline: none;
+            transition: border-color 0.2s;
+        }
+        .input-row input:focus { border-color: #00ffcc; box-shadow: 0 0 8px rgba(0,255,204,0.2); }
+        .input-row input:disabled { opacity: 0.3; }
+        .input-row button {
+            background: #00ffcc;
+            color: #0a0a0f;
+            border: none;
+            border-radius: 0.25rem;
+            padding: 0.4rem 1rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            font-size: 0.6rem;
+            letter-spacing: 0.05em;
+            cursor: pointer;
+            transition: all 0.15s;
+            font-family: 'JetBrains Mono', monospace;
+        }
+        .input-row button:hover { background: #00e6b8; }
+        .input-row button:active { transform: scale(0.97); }
+        .input-row button:disabled { opacity: 0.2; pointer-events: none; }
+
+        /* RIGHT PANEL */
+        .right-panel {
+            width: 240px;
+            min-width: 180px;
+            border-left: 1px solid #2a2a3a;
+            background: rgba(10,10,15,0.8);
+            padding: 1rem;
+            display: flex;
+            flex-direction: column;
+            gap: 0.75rem;
+            overflow-y: auto;
+            flex-shrink: 0;
+        }
+        .right-panel .section-title {
+            font-size: 0.65rem;
+            font-weight: 700;
+            letter-spacing: 0.05em;
+            color: #606080;
+            text-transform: uppercase;
+            border-bottom: 1px solid rgba(42,42,58,0.6);
+            padding-bottom: 0.3rem;
+        }
+        .metric-card {
+            background: rgba(20,20,30,0.8);
+            border: 1px solid #2a2a3a;
+            border-radius: 0.5rem;
+            padding: 0.5rem 0.75rem;
+            box-shadow: 0 0 15px rgba(167,139,250,0.03);
+        }
+        .metric-card .label {
+            font-size: 0.55rem;
+            color: #606080;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+        .metric-card .value {
+            font-size: 1.1rem;
+            font-weight: 700;
+            color: #00ffcc;
+            font-family: 'JetBrains Mono', monospace;
+        }
+        .metric-card .value .unit {
+            font-size: 0.55rem;
+            font-weight: 400;
+            color: #606080;
+            margin-left: 0.15rem;
+        }
+        .metric-card .value.green { color: #34d399; }
+
+        .layer-grid-wrap {
+            flex: 1;
+            border: 1px solid #2a2a3a;
+            background: rgba(20,20,30,0.4);
+            border-radius: 0.5rem;
+            padding: 0.5rem;
+            display: flex;
+            flex-direction: column;
+            min-height: 100px;
+        }
+        .layer-grid-wrap .grid-label {
+            font-size: 0.55rem;
+            color: #606080;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            margin-bottom: 0.25rem;
+        }
+        #topology-layer-grid {
+            flex: 1;
+            display: grid;
+            grid-template-columns: repeat(8, 1fr);
+            gap: 3px;
+            align-content: start;
+            overflow-y: auto;
+        }
+        #topology-layer-grid .cell {
+            aspect-ratio: 1;
+            background: #1a1a2e;
+            border: 1px solid #2a2a3a;
+            border-radius: 2px;
+            transition: all 0.15s;
+        }
+        #topology-layer-grid .cell.active {
+            background: #00ffcc;
+            border-color: #00ffcc;
+            box-shadow: 0 0 8px #00ffcc;
+        }
+        .layer-grid-wrap .footer {
+            display: flex;
+            justify-content: space-between;
+            font-size: 0.55rem;
+            color: #606080;
+            border-top: 1px solid rgba(42,42,58,0.3);
+            padding-top: 0.3rem;
+            margin-top: 0.3rem;
+        }
+
+        /* RESPONSIVE */
+        @media (max-width: 1024px) {
+            .left-panel { width: 200px; min-width: 150px; }
+            .right-panel { width: 180px; min-width: 140px; }
+        }
+        @media (max-width: 768px) {
+            .app-main { flex-direction: column; }
+            .left-panel { width: 100%; border-right: none; border-bottom: 1px solid #2a2a3a; flex-direction: row; flex-wrap: wrap; gap: 0.5rem; padding: 0.75rem; max-height: 180px; }
+            .left-panel .fsm-grid { flex: 1; min-width: 120px; }
+            .right-panel { width: 100%; border-left: none; border-top: 1px solid #2a2a3a; flex-direction: row; flex-wrap: wrap; padding: 0.75rem; max-height: 180px; }
+            .right-panel .layer-grid-wrap { flex: 1; min-width: 140px; }
+            .app-header .brand h1 { font-size: 0.65rem; }
+        }
+        @media (max-width: 480px) {
+            .app-header .badges .badge { font-size: 0.5rem; padding: 0.1rem 0.4rem; }
+            .left-panel { padding: 0.5rem; max-height: 150px; }
+            .right-panel { padding: 0.5rem; max-height: 150px; }
+            .metric-card .value { font-size: 0.9rem; }
+        }
+    </style>
+</head>
+<body>
+
+    <!-- HEADER -->
+    <header class="app-header">
+        <div class="brand">
+            <div class="indicator" id="status-indicator"></div>
+            <h1>OUROBOROS // A.S.T.S.</h1>
+        </div>
+        <div class="badges">
+            <span class="badge">ENGINE: <span class="value" id="hw-engine-badge">PROFILING...</span></span>
+            <span class="badge">THERMAL: <span class="value thermal">NOMINAL</span></span>
+            <span class="badge">VRAM: <span class="value" id="vram-buffer-badge">0.00 MB</span></span>
+        </div>
+    </header>
+
+    <!-- MAIN -->
+    <div class="app-main">
+
+        <!-- LEFT PANEL -->
+        <section class="left-panel">
+            <div>
+                <div class="section-title">Modello <span class="accent">A.S.T.S.</span></div>
+                <div style="margin-top:0.5rem;">
+                    <div class="drop-zone" id="drop-zone">
+                        ⏷ Trascina il file GGUF
+                        <div class="sub">o clicca per selezionare</div>
+                        <div id="file-status"></div>
+                        <div id="file-size"></div>
+                    </div>
+                    <input type="file" id="file-input-hidden" accept=".gguf" style="display:none;">
+                    <div id="model-info"></div>
+                </div>
+            </div>
+            <div>
+                <div class="section-title">Stato Kernel FSM</div>
+                <div class="fsm-grid" style="margin-top:0.3rem;">
+                    <div class="fsm-item" id="fsm-analisi">ANALISI</div>
+                    <div class="fsm-item" id="fsm-sintesi">SINTESI</div>
+                    <div class="fsm-item" id="fsm-hardware">HARDWARE</div>
+                </div>
+            </div>
+        </section>
+
+        <!-- CENTER PANEL -->
+        <section class="center-panel">
+            <div id="console-terminal">
+                <div class="sys">[SYSTEM] Ouroboros A.S.T.S. avviato. Carica un file GGUF per iniziare.</div>
+            </div>
+            <div class="progress-wrap">
+                <div class="progress-bar"><div class="fill" id="progress-bar"></div></div>
+            </div>
+            <div class="input-row">
+                <input type="text" id="prompt-input" disabled placeholder="Carica un modello per iniziare..." />
+                <button id="btn-execute" disabled>Esegui</button>
+            </div>
+        </section>
+
+        <!-- RIGHT PANEL -->
+        <section class="right-panel">
+            <div class="section-title">Live Analytics</div>
+            <div class="metric-card">
+                <div class="label">Throughput</div>
+                <div class="value" id="metric-tps">0.00 <span class="unit">tok/sec</span></div>
+            </div>
+            <div class="metric-card">
+                <div class="label">TTFT</div>
+                <div class="value" id="metric-ttft">0 <span class="unit">ms</span></div>
+            </div>
+            <div class="metric-card">
+                <div class="label">Allocazione Sandbox</div>
+                <div class="value green" id="metric-sandbox">0.00 <span class="unit">GB</span></div>
+            </div>
+
+            <div class="layer-grid-wrap">
+                <div class="grid-label">Mappa Attivazione Layer</div>
+                <div id="topology-layer-grid"></div>
+                <div class="footer">
+                    <span>L_0</span>
+                    <span id="lbl-active-clusters">Cluster: 0 / 2048</span>
+                    <span>L_79</span>
+                </div>
+            </div>
+        </section>
+
+    </div>
+
+    <!-- MAIN LOGIC -->
+    <script type="module">
+        // ---- Ouroboros UI ----
+        console.log('Ouroboros UI: avviata');
+
+        const $ = id => document.getElementById(id);
+        const terminal = $('console-terminal');
+        const dropZone = $('drop-zone');
+        const fileInput = $('file-input-hidden');
+        const fileStatus = $('file-status');
+        const fileSize = $('file-size');
+        const modelInfo = $('model-info');
+        const promptInput = $('prompt-input');
+        const btnExecute = $('btn-execute');
+        const progressBar = $('progress-bar');
+        const statusIndicator = $('status-indicator');
+        const badgeHw = $('hw-engine-badge');
+        const badgeVram = $('vram-buffer-badge');
+        const metricTps = $('metric-tps');
+        const metricTtft = $('metric-ttft');
+        const metricSandbox = $('metric-sandbox');
+        const gridLayers = $('topology-layer-grid');
+        const lblClusters = $('lbl-active-clusters');
+        const fsmAnalisi = $('fsm-analisi');
+        const fsmSintesi = $('fsm-sintesi');
+        const fsmHardware = $('fsm-hardware');
+
+        let kernel = null, streamer = null, ouroBuffer = null;
+        let modelLoaded = false, isGenerating = false;
+        let tokenCount = 0, firstTokenTime = 0, startTime = 0;
+        const totalLayers = 80;
+
+        function log(msg, type = '') {
+            const div = document.createElement('div');
+            const ts = new Date().toLocaleTimeString();
+            const prefix = `[${ts}] `;
+            if (type === 'success') div.className = 'success';
+            else if (type === 'error') div.className = 'error';
+            else if (type === 'token') {
+                let bucket = terminal.querySelector('.token-bucket');
+                if (!bucket) {
+                    bucket = document.createElement('span');
+                    bucket.className = 'token-bucket';
+                    terminal.appendChild(bucket);
+                }
+                bucket.textContent += msg;
+                terminal.scrollTop = terminal.scrollHeight;
+                return;
+            } else div.className = 'sys';
+            const old = terminal.querySelector('.token-bucket');
+            if (old) old.classList.remove('token-bucket');
+            div.textContent = prefix + msg;
+            terminal.appendChild(div);
+            terminal.scrollTop = terminal.scrollHeight;
+        }
+
+        function updateFSM(state) {
+            const reset = 'fsm-item';
+            fsmAnalisi.className = reset;
+            fsmSintesi.className = reset;
+            fsmHardware.className = reset;
+            if (state === 'ANALISI') fsmAnalisi.className = 'fsm-item active-analisi';
+            else if (state === 'SINTESI') fsmSintesi.className = 'fsm-item active-sintesi';
+            else if (state === 'HARDWARE') fsmHardware.className = 'fsm-item active-hardware';
+        }
+
+        function updateProgress(val) {
+            progressBar.style.width = Math.min(100, val) + '%';
+        }
+
+        function buildGrid() {
+            gridLayers.innerHTML = '';
+            for (let i = 0; i < totalLayers; i++) {
+                const cell = document.createElement('div');
+                cell.className = 'cell';
+                cell.dataset.idx = i;
+                gridLayers.appendChild(cell);
+            }
+        }
+        buildGrid();
+
+        function updateLayers(active) {
+            const cells = gridLayers.querySelectorAll('.cell');
+            cells.forEach((cell, i) => {
+                cell.classList.toggle('active', active.includes(i));
+            });
+            lblClusters.textContent = `Cluster: ${active.length} / 2048`;
+        }
+
+        // ---- Drag & Drop ----
+        dropZone.addEventListener('click', () => fileInput.click());
+        dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('dragover'); });
+        dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
+        dropZone.addEventListener('drop', async e => {
+            e.preventDefault();
+            dropZone.classList.remove('dragover');
+            const file = e.dataTransfer.files[0];
+            if (!file) return;
+            if (!file.name.endsWith('.gguf')) {
+                log('Il file deve avere estensione .gguf', 'error');
+                return;
+            }
+            handleFile(file);
+        });
+
+        fileInput.addEventListener('change', e => {
+            if (e.target.files.length) handleFile(e.target.files[0]);
+        });
+
+        async function handleFile(file) {
+            fileStatus.textContent = `📄 ${file.name}`;
+            fileSize.textContent = `${(file.size / 1e9).toFixed(2)} GB`;
+            log(`File selezionato: ${file.name} (${(file.size / 1e9).toFixed(2)} GB)`);
+            await loadModulesAndStart(file);
+        }
+
+        // ---- Caricamento kernel ----
+        async function loadModulesAndStart(file) {
+            try {
+                const { OuroborosKernel } = await import('./kernel/stateMachine.js');
+                const { GgufStreamer } = await import('./io/ggufStreamer.js');
+                const { HardwareAuditor } = await import('./hw/auditor.js');
+                const { TopologyParser } = await import('./asts/topologyParser.js');
+                const { Scheduler } = await import('./kernel/scheduler.js');
+
+                log('Moduli A.S.T.S. caricati.', 'success');
+
+                const auditor = new HardwareAuditor();
+                const profile = await auditor.profileDevice();
+                badgeHw.textContent = profile.primaryDriver;
+
+                const source = { type: 'LOCAL', fileObject: file };
+                streamer = new GgufStreamer(source);
+                updateFSM('ANALISI');
+                updateProgress(10);
+                log('Generazione indice topologico dal GGUF...');
+                ouroBuffer = await streamer.generateTopologyFromGguf();
+                updateProgress(30);
+
+                const scheduler = new Scheduler();
+                const stateNotifier = (state, payload) => {
+                    if (state === 'IDLE') {
+                        updateProgress(100);
+                        modelLoaded = true;
+                        promptInput.disabled = false;
+                        btnExecute.disabled = false;
+                        promptInput.placeholder = 'Inserisci il prompt...';
+                        statusIndicator.style.boxShadow = '0 0 12px #00ffcc';
+                        log('Kernel A.S.T.S. pronto.', 'success');
+                    } else if (state === 'ANALYSIS') {
+                        updateFSM('ANALISI');
+                        updateProgress(20);
+                        log('Analisi geometrica del prompt...');
+                    } else if (state === 'SYNTHESIS') {
+                        updateFSM('SINTESI');
+                        updateProgress(40);
+                        log(`Sintesi tensore ${payload?.hash || ''} (${payload?.index}/${payload?.total})`);
+                    } else if (state === 'EXECUTION') {
+                        updateFSM('HARDWARE');
+                        updateProgress(70);
+                        if (payload?.layer !== undefined) {
+                            updateLayers([payload.layer]);
+                        }
+                    } else if (state === 'ERROR') {
+                        log(`ERRORE KERNEL: ${payload?.reason || 'sconosciuto'}`, 'error');
+                        updateProgress(0);
+                    }
+                };
+
+                kernel = new OuroborosKernel(stateNotifier);
+                await kernel.boot(source, ouroBuffer);
+
+                const topology = new TopologyParser().parseIndex(ouroBuffer);
+                modelInfo.style.display = 'block';
+                modelInfo.textContent = `Tensori: ${topology.tensorCount} | Layer: ${topology.layerCount}`;
+                metricSandbox.innerHTML = `${(file.size / 1e9).toFixed(2)} <span class="unit">GB (streaming)</span>`;
+
+            } catch (err) {
+                log(`ERRORE: ${err.message}`, 'error');
+                console.error(err);
+                fileStatus.textContent = '⚠️ Errore - vedi console';
+            }
+        }
+
+        // ---- Inferenza ----
+        async function runInference() {
+            if (isGenerating || !modelLoaded || !kernel) return;
+            const prompt = promptInput.value.trim();
+            if (!prompt) return;
+
+            isGenerating = true;
+            promptInput.disabled = true;
+            btnExecute.disabled = true;
+            tokenCount = 0;
+            firstTokenTime = 0;
+            startTime = performance.now();
+            metricTtft.innerHTML = '0 <span class="unit">ms</span>';
+            metricTps.innerHTML = '0.00 <span class="unit">tok/sec</span>';
+            updateProgress(0);
+            const old = terminal.querySelector('.token-bucket');
+            if (old) old.remove();
+            log(`Utente: ${prompt}`);
+
+            try {
+                await kernel.submitInference(prompt, (token, metrics) => {
+                    handleToken(token);
+                    if (metrics) {
+                        const layer = metrics.layer;
+                        if (layer !== undefined) updateLayers([layer]);
+                        const p = Math.min(100, (tokenCount / 200) * 80 + 20);
+                        updateProgress(p);
+                    }
+                });
+                updateProgress(100);
+                log('Inferenza completata.', 'success');
+            } catch (err) {
+                log(`Errore inferenza: ${err.message}`, 'error');
+                progressBar.style.background = '#f87171';
+            } finally {
+                isGenerating = false;
+                promptInput.disabled = false;
+                btnExecute.disabled = false;
+                promptInput.focus();
+            }
+        }
+
+        function handleToken(token) {
+            const now = performance.now();
+            if (tokenCount === 0) {
+                firstTokenTime = now;
+                const ttft = Math.round(now - startTime);
+                metricTtft.innerHTML = `${ttft} <span class="unit">ms</span>`;
+            }
+            tokenCount++;
+            log(token, 'token');
+
+            if (firstTokenTime > 0) {
+                const elapsed = (now - firstTokenTime) / 1000;
+                if (elapsed > 0) {
+                    const tps = (tokenCount / elapsed).toFixed(2);
+                    metricTps.innerHTML = `${tps} <span class="unit">tok/sec</span>`;
+                }
+            }
+            badgeVram.textContent = `${(tokenCount * 0.1).toFixed(2)} MB`;
+        }
+
+        btnExecute.addEventListener('click', runInference);
+        promptInput.addEventListener('keydown', e => {
+            if (e.key === 'Enter' && !btnExecute.disabled) runInference();
+        });
+
+        // ---- Hardware fallback (prima del caricamento moduli) ----
+        (async function detectFallback() {
+            if (navigator.gpu) {
+                try {
+                    const adapter = await navigator.gpu.requestAdapter();
+                    if (adapter) badgeHw.textContent = 'WebGPU';
+                } catch (_) {}
+            } else if (navigator.ml) {
+                badgeHw.textContent = 'WebNN (NPU)';
+            } else {
+                badgeHw.textContent = 'WASM SIMD';
+            }
+        })();
+
+        log('Ouroboros UI pronta. Trascina un file GGUF per iniziare.');
+        console.log('Ouroboros UI avviata.');
+    </script>
+</body>
+</html>

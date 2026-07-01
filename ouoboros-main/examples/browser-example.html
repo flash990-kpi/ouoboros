@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ouroboros - Browser Example</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+            border-bottom: 2px solid #007bff;
+            padding-bottom: 10px;
+        }
+        .section {
+            margin: 20px 0;
+        }
+        button {
+            background: #007bff;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+            margin: 5px;
+        }
+        button:hover {
+            background: #0056b3;
+        }
+        #output {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 5px;
+            margin-top: 20px;
+            font-family: monospace;
+            white-space: pre-wrap;
+            min-height: 100px;
+        }
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 10px;
+            margin: 20px 0;
+        }
+        .stat-box {
+            background: #e9ecef;
+            padding: 15px;
+            border-radius: 5px;
+            text-align: center;
+        }
+        .stat-value {
+            font-size: 24px;
+            font-weight: bold;
+            color: #007bff;
+        }
+        .stat-label {
+            font-size: 12px;
+            color: #666;
+            margin-top: 5px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🐍 Ouroboros - Browser Example</h1>
+        
+        <div class="section">
+            <h2>Topology Generation</h2>
+            <button onclick="generateTopology()">Generate Topology</button>
+            <button onclick="clearOutput()">Clear Output</button>
+        </div>
+
+        <div class="stats">
+            <div class="stat-box">
+                <div class="stat-value" id="layerCount">0</div>
+                <div class="stat-label">Layers</div>
+            </div>
+            <div class="stat-box">
+                <div class="stat-value" id="totalParams">0</div>
+                <div class="stat-label">Parameters</div>
+            </div>
+            <div class="stat-box">
+                <div class="stat-value" id="sparsity">0%</div>
+                <div class="stat-label">Sparsity</div>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>Output</h2>
+            <div id="output">Click "Generate Topology" to start...</div>
+        </div>
+    </div>
+
+    <script>
+        // Simple topology generator for browser demo
+        function generateTopology() {
+            const output = document.getElementById('output');
+            output.textContent = 'Generating topology...\n';
+
+            const numLayers = Math.floor(Math.random() * 3) + 2; // 2-4 layers
+            const baseUnits = 64;
+            let totalParams = 0;
+            let totalWeights = 0;
+            let zeroWeights = 0;
+
+            const topology = {
+                layers: []
+            };
+
+            for (let i = 0; i < numLayers; i++) {
+                const units = baseUnits * Math.pow(2, i);
+                const inputUnits = i === 0 ? 784 : baseUnits * Math.pow(2, i - 1);
+                const layerParams = units * inputUnits;
+                
+                totalParams += layerParams;
+                
+                const layer = {
+                    type: 'dense',
+                    units: units,
+                    inputUnits: inputUnits,
+                    parameters: layerParams
+                };
+
+                // Simulate sparse weights
+                const sparsity = 0.5 + Math.random() * 0.3;
+                const weights = [];
+                for (let j = 0; j < layerParams; j++) {
+                    if (Math.random() < sparsity) {
+                        weights.push(0);
+                        zeroWeights++;
+                    } else {
+                        weights.push((Math.random() - 0.5) * 2);
+                    }
+                    totalWeights++;
+                }
+                layer.weights = weights;
+                layer.sparsity = zeroWeights / totalWeights;
+
+                topology.layers.push(layer);
+                
+                output.textContent += `Layer ${i + 1}: ${layer.type}, ${units} units, ${layerParams} params\n`;
+            }
+
+            const overallSparsity = zeroWeights / totalWeights;
+
+            // Update stats
+            document.getElementById('layerCount').textContent = numLayers;
+            document.getElementById('totalParams').textContent = totalParams.toLocaleString();
+            document.getElementById('sparsity').textContent = (overallSparsity * 100).toFixed(1) + '%';
+
+            output.textContent += '\n✅ Topology generated successfully!\n';
+            output.textContent += `Total layers: ${numLayers}\n`;
+            output.textContent += `Total parameters: ${totalParams.toLocaleString()}\n`;
+            output.textContent += `Overall sparsity: ${(overallSparsity * 100).toFixed(2)}%\n`;
+            output.textContent += `\nTopology JSON:\n${JSON.stringify(topology, null, 2)}`;
+        }
+
+        function clearOutput() {
+            document.getElementById('output').textContent = 'Click "Generate Topology" to start...';
+            document.getElementById('layerCount').textContent = '0';
+            document.getElementById('totalParams').textContent = '0';
+            document.getElementById('sparsity').textContent = '0%';
+        }
+    </script>
+</body>
+</html>
