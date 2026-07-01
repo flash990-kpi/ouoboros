@@ -104,6 +104,16 @@ export class GgufStreamer {
             this.saveOuroToDisk(ouroBuffer, file.name);
             return ouroBuffer;
         }
+        catch (error) {
+            if (error.message && error.message.includes('Unsupported metadata type')) {
+                throw new Error(
+                    'Il file GGUF contiene un tipo di metadata non supportato dalla libreria corrente. ' +
+                    'Questo potrebbe essere un file GGUF con quantizzazione molto recente o personalizzata. ' +
+                    'Prova con un file GGUF standard (es. Q4_K_M, Q5_K_M, Q8_0).'
+                );
+            }
+            throw error;
+        }
         finally {
             URL.revokeObjectURL(blobUrl);
         }
