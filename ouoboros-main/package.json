@@ -12,7 +12,8 @@
     "test": "jest",
     "lint": "eslint . --ext .ts",
     "format": "prettier --write \"**/*.ts\"",
-    "clean": "rimraf dist"
+    "clean": "rimraf dist",
+    "generate-icons": "node generate-icons.js"
   },
   "keywords": [
     "neural-networks",
