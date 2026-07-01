@@ -1,33 +1,12 @@
-# Ouroboros .gitignore
-
-# Modelli GGUF (escludi TUTTI i file .gguf e .ouro)
-*.gguf
-*.ouro
-models/*.gguf
-models/*.ouro
-
-# Dipendenze e build
 node_modules/
 dist/
+.env
+.env.local
+*.log
+.DS_Store
 .vscode/
 .idea/
-*.log
+models/*.gguf
+models/*.ouro
 *.tmp
-.DS_Store
-
-# File temporanei scaricati
-*.tgz
-package/
-lib/huggingface.js/
-public/lib/
-
-# File di compilazione TypeScript (opzionale – se vuoi escluderli)
-# *.js
-# *.js.map
-# *.d.ts
-
-# Altri temporanei
-*.tsbuildinfo
-main.json
-manifest.js
-istruzioni-gemini.txt
+.cache/
