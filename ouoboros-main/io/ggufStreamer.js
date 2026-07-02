@@ -42,30 +42,18 @@ export class GgufStreamer {
         }
     }
     
-    // Genera l'indice topologico .ouro dal file GGUF usando sistema multi-parser
+    // Genera l'indice topologico .ouro dal file GGUF usando solo parser personalizzato
     async generateTopologyFromGguf() {
         const file = this.source.fileObject;
         
         try {
-            console.log('[GGUF] Starting multi-parser approach...');
+            console.log('[GGUF] Using custom parser only...');
             
-            // Strategia 1: Usa @huggingface/transformers se disponibile
-            let header = null;
-            try {
-                header = await this.parseWithTransformers(file);
-                console.log('[GGUF] Transformers parser succeeded');
-            } catch (e) {
-                console.warn('[GGUF] Transformers parser failed:', e.message);
-            }
-            
-            // Strategia 2: Usa parser personalizzato se Transformers fallisce
-            if (!header || header.tensors.length === 0) {
-                console.log('[GGUF] Falling back to custom parser...');
-                header = await this.readGgufHeaderComplete(file);
-            }
+            // Usa solo il parser personalizzato
+            const header = await this.readGgufHeaderComplete(file);
             
             if (!header || header.tensors.length === 0) {
-                throw new Error('Nessun parser è riuscito a leggere i tensori dal file GGUF');
+                throw new Error('Nessun tensore parsato dal file GGUF');
             }
             
             console.log('[GGUF] Header parsed successfully:', {
@@ -177,41 +165,6 @@ export class GgufStreamer {
         }
     }
     
-    // Parser usando @huggingface/gguf (se disponibile)
-    async parseWithTransformers(file) {
-        try {
-            // Tenta di importare dinamicamente la libreria
-            const ggufLib = await import('@huggingface/gguf');
-            
-            // Crea un GGUF reader per leggere l'header
-            const buffer = await file.arrayBuffer();
-            const uint8Array = new Uint8Array(buffer);
-            
-            // Usa il parser GGUF
-            const gguf = await ggufLib.GGUF.from_buffer(uint8Array);
-            
-            const tensors = [];
-            for (const tensor of gguf.tensors) {
-                tensors.push({
-                    name: tensor.name,
-                    shape: tensor.shape,
-                    dtype: tensor.dtype,
-                    offset: BigInt(tensor.data_offset)
-                });
-            }
-            
-            return {
-                version: gguf.version,
-                tensorCount: gguf.tensor_count,
-                metadataKVCount: gguf.metadata_kv_count,
-                alignment: gguf.alignment || 32,
-                tensors
-            };
-        } catch (e) {
-            throw new Error(`GGUF parser non disponibile o fallito: ${e.message}`);
-        }
-    }
-    
     // Parser GGUF minimalista per file molto grandi o non standard
     async readGgufHeaderComplete(file) {
         console.log('[GGUF] Starting minimal parser for large files...');
@@ -311,7 +264,11 @@ export class GgufStreamer {
         let debugHex = '';
         for (let i = 0; i < 32 && offset + i < headerBuffer.byteLength; i++) {
             const byte = headerBuffer[offset + i];
-            debugHex += byte.toString(16).padStart(2, '0') + ' ';
+            if (byte !== undefined) {
+                debugHex += byte.toString(16).padStart(2, '0') + ' ';
+            } else {
+                debugHex += '?? ';
+            }
         }
         console.log(debugHex);
         
