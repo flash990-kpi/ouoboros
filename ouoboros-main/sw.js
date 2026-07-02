@@ -15,6 +15,12 @@ self.addEventListener('install', event => {
 });
 
 self.addEventListener('fetch', event => {
+    // Non intercettare i moduli JavaScript per evitare problemi di caricamento
+    if (event.request.url.endsWith('.js') || event.request.url.endsWith('.mjs')) {
+        event.respondWith(fetch(event.request));
+        return;
+    }
+    
     event.respondWith(
         caches.match(event.request)
             .then(response => {
