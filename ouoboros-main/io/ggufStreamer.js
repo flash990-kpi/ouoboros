@@ -42,37 +42,38 @@ export class GgufStreamer {
         }
     }
     
-    // Genera l'indice topologico .ouro dal file GGUF usando hyllama (official web-compatible parser)
+    // Genera l'indice topologico .ouro dal file GGUF usando @localmode/wllama (official llama.cpp WASM)
     async generateTopologyFromGguf() {
         const file = this.source.fileObject;
         
         try {
-            console.log('[GGUF] Using hyllama (official web-compatible GGUF parser)...');
+            console.log('[GGUF] Using @localmode/wllama (official llama.cpp WASM)...');
             console.log(`[GGUF] File size: ${file.size} bytes`);
             
-            // Leggi i primi 10MB per il header (sufficiente per metadata e tensor info)
-            console.log('[GGUF] Reading first 10MB for header...');
-            const headerBytes = await this.readLocalSlice(0, 10 * 1024 * 1024);
-            console.log(`[GGUF] Read ${headerBytes.byteLength} bytes`);
+            // Usa @localmode/wllama per parsare il GGUF
+            const { parseGGUFMetadata } = await import('@localmode/wllama');
             
-            // Usa hyllama per parsare il GGUF
-            const { ggufMetadata } = await import('hyllama');
-            const { metadata, tensorInfos } = ggufMetadata(headerBytes);
+            // Crea URL blob per il file locale
+            const fileUrl = URL.createObjectURL(file);
+            console.log('[GGUF] Parsing GGUF metadata...');
+            const metadata = await parseGGUFMetadata(fileUrl);
             
-            console.log('[GGUF] Parsed with hyllama:', {
-                tensorCount: tensorInfos.length,
-                metadataKeys: Object.keys(metadata)
+            console.log('[GGUF] Parsed with @localmode/wllama:', {
+                tensorCount: metadata.tensor_count,
+                architecture: metadata.architecture
             });
             
-            // Converti i tensori dal formato hyllama al nostro formato
+            // Converti i tensori dal formato @localmode/wllama al nostro formato
             const tensors = [];
-            for (const tensorInfo of tensorInfos) {
-                tensors.push({
-                    name: tensorInfo.name,
-                    shape: tensorInfo.shape.map(dim => BigInt(dim)),
-                    dtype: tensorInfo.dtype,
-                    offset: BigInt(tensorInfo.offset || 0)
-                });
+            if (metadata.tensors) {
+                for (const tensorInfo of metadata.tensors) {
+                    tensors.push({
+                        name: tensorInfo.name,
+                        shape: tensorInfo.shape.map(dim => BigInt(dim)),
+                        dtype: tensorInfo.type,
+                        offset: BigInt(tensorInfo.offset || 0)
+                    });
+                }
             }
             
             const tensorCount = tensors.length;
@@ -161,6 +162,9 @@ export class GgufStreamer {
             
             // Scrittura layer count
             ouroView.setUint32(12, maxLayerFound + 1, true);
+            
+            // Pulisci URL blob
+            URL.revokeObjectURL(fileUrl);
             
             // Salva automaticamente il file .ouro
             this.saveOuroToDisk(ouroBuffer, file.name);
