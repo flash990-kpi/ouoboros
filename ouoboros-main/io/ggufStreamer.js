@@ -200,11 +200,7 @@ export class GgufStreamer {
             const file = this.source.fileObject;
             console.log(`[GGUF] Reading slice: offset=${offset}, length=${length}, fileSize=${file.size}`);
             
-            // Per file molto grandi, usa chunk più piccoli
-            const maxChunkSize = 100 * 1024 * 1024; // 100MB max per chunk
-            const actualLength = Math.min(length, maxChunkSize);
-            
-            const slice = file.slice(offset, offset + actualLength);
+            const slice = file.slice(offset, offset + length);
             const reader = new FileReader();
             
             reader.onload = () => {

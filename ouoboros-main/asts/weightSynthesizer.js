@@ -5,13 +5,24 @@ export class WeightSynthesizer {
      */
     synthesizeTensor(rawBuffer, type, rank) {
         const totalBytes = rawBuffer.byteLength;
-        // Calcolo della dimensione finale stimata: la quantizzazione Q4 espande di un fattore 2 in float32
-        const outputElements = type === 0 ? totalBytes * 2 : totalBytes / 4;
+        // Calcolo della dimensione finale stimata in base al tipo
+        let outputElements;
+        if (type === 0) {
+            // Q4_0: 2 float32 per byte
+            outputElements = totalBytes * 2;
+        } else if (type === 14) {
+            // I8: 1 float32 per byte
+            outputElements = totalBytes;
+        } else {
+            // Float32: 1 float32 per 4 byte
+            outputElements = totalBytes / 4;
+        }
         const sharedBuffer = new SharedArrayBuffer(outputElements * 4);
         const outputView = new Float32Array(sharedBuffer);
         const inputView = new DataView(rawBuffer);
         // Coefficiente di riscalatura della topologia sparsa
         const scaleFactor = 2.0 / (1.0 + Math.exp(-rank / 2.0));
+        
         if (type === 0) {
             // Algoritmo di Dequantizzazione Q4_0 puro ad alte prestazioni (32 elementi per blocco)
             // Struttura blocco GGUF Q4_0: 2 byte f16 (scale) + 16 byte pesi (32 nibble)
@@ -46,6 +57,14 @@ export class WeightSynthesizer {
                         outputView[baseOutputIndex + 1] = (highNibble - 8) * finalScale;
                     }
                 }
+            }
+        }
+        else if (type === 14) {
+            // Dequantizzazione I8 (int8) per tensori di input/embedding
+            const elements = Math.floor(totalBytes);
+            for (let i = 0; i < elements && i < outputView.length; i++) {
+                const int8Val = inputView.getInt8(i);
+                outputView[i] = int8Val * scaleFactor;
             }
         }
         else {
