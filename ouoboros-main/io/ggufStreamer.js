@@ -306,6 +306,15 @@ export class GgufStreamer {
         
         console.log(`[GGUF] After metadata, offset: ${offset}`);
         
+        // Debug: stampa 32 byte dopo il metadata per vedere cosa c'è
+        console.log('[GGUF] 32 bytes after metadata:');
+        let debugHex = '';
+        for (let i = 0; i < 32 && offset + i < headerBuffer.byteLength; i++) {
+            const byte = headerBuffer[offset + i];
+            debugHex += byte.toString(16).padStart(2, '0') + ' ';
+        }
+        console.log(debugHex);
+        
         // Parse tensor info con estrema cautela
         const tensors = [];
         for (let i = 0; i < tensorCount; i++) {
@@ -316,6 +325,7 @@ export class GgufStreamer {
                 }
                 
                 const nameLen = view.getUint32(offset, true);
+                console.log(`[GGUF] Tensor ${i}: nameLen = ${nameLen} at offset ${offset}`);
                 offset += 4;
                 
                 // Sanity check: nameLen non dovrebbe essere > 1000
@@ -339,6 +349,7 @@ export class GgufStreamer {
                 }
                 
                 const nDims = view.getUint32(offset, true);
+                console.log(`[GGUF] Tensor ${i}: nDims = ${nDims} at offset ${offset}`);
                 offset += 4;
                 
                 // Sanity check: nDims non dovrebbe essere > 10
