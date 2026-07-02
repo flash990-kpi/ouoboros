@@ -5,6 +5,9 @@ const path = require('path');
 
 const PORT = process.env.PORT || 8080;
 
+// Serve from dist folder for bundled production build
+const ROOT_DIR = './dist';
+
 const MIME_TYPES = {
     '.html': 'text/html',
     '.js': 'text/javascript',
@@ -30,17 +33,18 @@ const server = http.createServer((req, res) => {
 
     console.log(`[SERVER] Request: ${req.method} ${urlPath}`);
 
-    // Se la richiesta è per la root, serviamo index.html dalla root
+    // Se la richiesta è per la root, serviamo index.html dalla dist folder
     let filePath;
     if (urlPath === '/') {
-        filePath = './index.html';
+        filePath = path.join(ROOT_DIR, 'index.html');
     } 
     // Se la richiesta è per node_modules, serviamo dalla cartella node_modules locale
     else if (urlPath.startsWith('/node_modules/')) {
         filePath = '.' + urlPath; // ad esempio /node_modules/... -> ./node_modules/...
-    } 
+    }
+    // Altrimenti serviamo dalla dist folder
     else {
-        filePath = '.' + urlPath;
+        filePath = path.join(ROOT_DIR, urlPath);
     }
 
     console.log(`[SERVER] Serving file: ${filePath}`);
