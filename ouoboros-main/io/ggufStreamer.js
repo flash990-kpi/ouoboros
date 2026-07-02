@@ -224,7 +224,12 @@ export class GgufStreamer {
         console.log('[GGUF] First 64 bytes hex:');
         let hexString = '';
         for (let i = 0; i < 64 && i < debugBuffer.byteLength; i++) {
-            hexString += debugBuffer[i].toString(16).padStart(2, '0') + ' ';
+            const byte = debugBuffer[i];
+            if (byte !== undefined) {
+                hexString += byte.toString(16).padStart(2, '0') + ' ';
+            } else {
+                hexString += '?? ';
+            }
         }
         console.log(hexString);
         
