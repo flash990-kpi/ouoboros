@@ -20,7 +20,9 @@ const MIME_TYPES = {
     '.gif': 'image/gif',
     '.svg': 'image/svg+xml',
     '.ico': 'image/x-icon',
-    '.txt': 'text/plain'
+    '.txt': 'text/plain',
+    '.bin': 'application/octet-stream',
+    '.onnx': 'application/octet-stream'
 };
 
 const server = http.createServer((req, res) => {
