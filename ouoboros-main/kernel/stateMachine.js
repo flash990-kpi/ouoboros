@@ -29,6 +29,12 @@ export class OuroborosKernel {
             this.transitionTo('BOOTSTRAPPING');
             const auditor = new HardwareAuditor();
             this.hardwareProfile = await auditor.profileDevice();
+            
+            // Forza WASM driver per supporto completo quantizzazione GGUF
+            // WebGPU non supporta dequantizzazione Q4_K nativamente
+            console.log('[STATE MACHINE] Forcing WASM driver for GGUF quantization support');
+            this.hardwareProfile.primaryDriver = 'WASM';
+            
             // Inizializzazione del driver concordato dall'auditor hardware
             if (this.hardwareProfile.primaryDriver === 'WebNN') {
                 await this.driverWebNn.initialize();
