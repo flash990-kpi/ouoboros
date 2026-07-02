@@ -42,38 +42,37 @@ export class GgufStreamer {
         }
     }
     
-    // Genera l'indice topologico .ouro dal file GGUF usando @localmode/wllama (official llama.cpp WASM)
+    // Genera l'indice topologico .ouro dal file GGUF usando @huggingface/gguf (official Hugging Face parser)
     async generateTopologyFromGguf() {
         const file = this.source.fileObject;
         
         try {
-            console.log('[GGUF] Using @localmode/wllama (official llama.cpp WASM)...');
+            console.log('[GGUF] Using @huggingface/gguf (official Hugging Face parser)...');
             console.log(`[GGUF] File size: ${file.size} bytes`);
             
-            // Usa @localmode/wllama per parsare il GGUF
-            const { parseGGUFMetadata } = await import('@localmode/wllama');
+            // Usa @huggingface/gguf per parsare il GGUF
+            const { gguf } = await import('@huggingface/gguf');
             
-            // Crea URL blob per il file locale
+            // Crea URL blob per il file locale (workaround per browser)
             const fileUrl = URL.createObjectURL(file);
-            console.log('[GGUF] Parsing GGUF metadata...');
-            const metadata = await parseGGUFMetadata(fileUrl);
+            console.log('[GGUF] Parsing GGUF with blob URL...');
             
-            console.log('[GGUF] Parsed with @localmode/wllama:', {
-                tensorCount: metadata.tensor_count,
-                architecture: metadata.architecture
+            const { metadata, tensorInfos } = await gguf(fileUrl);
+            
+            console.log('[GGUF] Parsed with @huggingface/gguf:', {
+                tensorCount: tensorInfos.length,
+                metadataKeys: Object.keys(metadata)
             });
             
-            // Converti i tensori dal formato @localmode/wllama al nostro formato
+            // Converti i tensori dal formato @huggingface/gguf al nostro formato
             const tensors = [];
-            if (metadata.tensors) {
-                for (const tensorInfo of metadata.tensors) {
-                    tensors.push({
-                        name: tensorInfo.name,
-                        shape: tensorInfo.shape.map(dim => BigInt(dim)),
-                        dtype: tensorInfo.type,
-                        offset: BigInt(tensorInfo.offset || 0)
-                    });
-                }
+            for (const tensorInfo of tensorInfos) {
+                tensors.push({
+                    name: tensorInfo.name,
+                    shape: tensorInfo.shape.map(dim => BigInt(dim)),
+                    dtype: tensorInfo.dtype,
+                    offset: BigInt(tensorInfo.offset || 0)
+                });
             }
             
             const tensorCount = tensors.length;
