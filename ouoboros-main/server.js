@@ -5,8 +5,8 @@ const path = require('path');
 
 const PORT = process.env.PORT || 8080;
 
-// Serve from source folder for development
-const ROOT_DIR = '.';
+// Serve from dist folder for bundled production build with Transformers.js
+const ROOT_DIR = './dist';
 
 const MIME_TYPES = {
     '.html': 'text/html',
@@ -33,16 +33,16 @@ const server = http.createServer((req, res) => {
 
     console.log(`[SERVER] Request: ${req.method} ${urlPath}`);
 
-    // Se la richiesta è per la root, serviamo index.html dalla source folder
+    // Se la richiesta è per la root, serviamo index.html dalla dist folder
     let filePath;
     if (urlPath === '/') {
         filePath = path.join(ROOT_DIR, 'index.html');
     } 
     // Se la richiesta è per node_modules, serviamo dalla cartella node_modules locale
     else if (urlPath.startsWith('/node_modules/')) {
-        filePath = '.' + urlPath; // ad esempio /node_modules/... -> ./node_modules/...
+        filePath = '.' + urlPath;
     }
-    // Altrimenti serviamo dalla source folder
+    // Altrimenti serviamo dalla dist folder
     else {
         filePath = path.join(ROOT_DIR, urlPath);
     }
