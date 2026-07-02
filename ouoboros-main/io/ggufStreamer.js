@@ -42,22 +42,25 @@ export class GgufStreamer {
         }
     }
     
-    // Genera l'indice topologico .ouro dal file GGUF usando @huggingface/gguf (official Hugging Face parser)
+    // Genera l'indice topologico .ouro dal file GGUF usando @huggingface/gguf (official Hugging Face parser from CDN)
     async generateTopologyFromGguf() {
         const file = this.source.fileObject;
         
         try {
-            console.log('[GGUF] Using @huggingface/gguf (official Hugging Face parser)...');
+            console.log('[GGUF] Using @huggingface/gguf from CDN (official Hugging Face parser)...');
             console.log(`[GGUF] File size: ${file.size} bytes`);
             
-            // Usa @huggingface/gguf per parsare il GGUF
-            const { gguf } = await import('@huggingface/gguf');
+            // Usa @huggingface/gguf dal CDN (caricato come script globale)
+            const ggufLib = window.HuggingFaceGGUF || window.gguf;
+            if (!ggufLib) {
+                throw new Error('@huggingface/gguf non caricato dal CDN. Controlla console per errori.');
+            }
             
             // Crea URL blob per il file locale (workaround per browser)
             const fileUrl = URL.createObjectURL(file);
             console.log('[GGUF] Parsing GGUF with blob URL...');
             
-            const { metadata, tensorInfos } = await gguf(fileUrl);
+            const { metadata, tensorInfos } = await ggufLib.gguf(fileUrl);
             
             console.log('[GGUF] Parsed with @huggingface/gguf:', {
                 tensorCount: tensorInfos.length,
