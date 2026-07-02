@@ -42,16 +42,16 @@ export class GgufStreamer {
         }
     }
     
-    // Genera l'indice topologico .ouro dal file GGUF usando @huggingface/gguf (official Hugging Face parser)
+    // Genera l'indice topologico .ouro dal file GGUF usando @huggingface/gguf (official Hugging Face parser from esm.sh CDN)
     async generateTopologyFromGguf() {
         const file = this.source.fileObject;
         
         try {
-            console.log('[GGUF] Using @huggingface/gguf (official Hugging Face parser)...');
+            console.log('[GGUF] Using @huggingface/gguf from esm.sh CDN (official Hugging Face parser)...');
             console.log(`[GGUF] File size: ${file.size} bytes`);
             
-            // Usa @huggingface/gguf tramite import map
-            const { gguf } = await import('@huggingface/gguf');
+            // Usa @huggingface/gguf da esm.sh CDN (bundled con tutte le dipendenze)
+            const { gguf } = await import('https://esm.sh/@huggingface/gguf@0.4.2');
             
             // Crea URL blob per il file locale (workaround per browser)
             const fileUrl = URL.createObjectURL(file);
