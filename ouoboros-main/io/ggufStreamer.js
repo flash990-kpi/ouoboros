@@ -502,16 +502,40 @@ export class GgufStreamer {
     readLocalSlice(offset, length) {
         return new Promise((resolve, reject) => {
             const file = this.source.fileObject;
-            const slice = file.slice(offset, offset + length);
+            console.log(`[GGUF] Reading slice: offset=${offset}, length=${length}, fileSize=${file.size}`);
+            
+            // Per file molto grandi, usa chunk più piccoli
+            const maxChunkSize = 100 * 1024 * 1024; // 100MB max per chunk
+            const actualLength = Math.min(length, maxChunkSize);
+            
+            const slice = file.slice(offset, offset + actualLength);
             const reader = new FileReader();
+            
             reader.onload = () => {
-                if (reader.result instanceof ArrayBuffer)
+                if (reader.result instanceof ArrayBuffer) {
+                    console.log(`[GGUF] Successfully read ${reader.result.byteLength} bytes`);
                     resolve(reader.result);
-                else
-                    reject(new Error("Errore lettura chunk."));
+                } else {
+                    reject(new Error("Errore lettura chunk: result non è ArrayBuffer"));
+                }
             };
-            reader.onerror = () => reject(reader.error);
-            reader.readAsArrayBuffer(slice);
+            
+            reader.onerror = () => {
+                console.error('[GGUF] FileReader error:', reader.error);
+                reject(reader.error);
+            };
+            
+            reader.onabort = () => {
+                console.error('[GGUF] FileReader aborted');
+                reject(new Error("FileReader aborted"));
+            };
+            
+            try {
+                reader.readAsArrayBuffer(slice);
+            } catch (e) {
+                console.error('[GGUF] Exception in readAsArrayBuffer:', e);
+                reject(e);
+            }
         });
     }
     async readRemoteRange(offset, length) {
