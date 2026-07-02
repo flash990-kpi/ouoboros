@@ -22,8 +22,9 @@ export class OuroborosKernel {
         this.onStateChange = stateChangeNotifier;
         // Transformers.js pipeline per vera inferenza LLM
         this.llmPipeline = null;
+        this.localGgufFile = null;
         
-        // Configura Transformers.js per uso locale e performance
+        // Configura Transformers.js per uso locale
         env.allowLocalModels = true;
         env.useBrowserCache = true;
         env.allowRemoteModels = false;
@@ -59,20 +60,10 @@ export class OuroborosKernel {
             this.activeTopologyMap = this.topologyParser.parseIndex(finalOuroBuffer);
             this.sparsityPredictor = new SparsityPredictor(this.activeTopologyMap);
             
-            // Inizializza Transformers.js con il file GGUF locale per vera inferenza LLM
-            console.log('[STATE MACHINE] Initializing Transformers.js pipeline...');
-            const fileUrl = URL.createObjectURL(source.fileObject);
+            // Salva il file GGUF locale fornito dall'utente
+            this.localGgufFile = source.fileObject;
             
-            // Carica pipeline text-generation con file GGUF locale e WebGPU acceleration
-            this.llmPipeline = await pipeline('text-generation', 'Xenova/LaMini-Flan-T5-783M', {
-                quantized: true,
-                device: this.hardwareProfile.primaryDriver === 'WebGPU' ? 'webgpu' : 'wasm',
-                progress_callback: (progress) => {
-                    console.log('[TRANSFORMERS] Progress:', progress);
-                }
-            });
-            
-            console.log('[STATE MACHINE] Transformers.js pipeline initialized with', this.hardwareProfile.primaryDriver);
+            console.log('[STATE MACHINE] A.S.T.S. system ready with local GGUF file');
             
             this.transitionTo('IDLE', {
                 driver: this.hardwareProfile.primaryDriver,
@@ -87,15 +78,15 @@ export class OuroborosKernel {
     }
     /**
      * Inietta un prompt nel motore di navigazione geometrica A.S.T.S.
-     * Usa Transformers.js per vera inferenza LLM con streaming dei token.
+     * Usa Transformers.js con il file GGUF locale fornito dall'utente.
      */
     submitInference(prompt, onTokenGenerated) {
         if (this.internalState === 'BOOTSTRAPPING' || this.internalState === 'ERROR') {
             throw new Error(`Invocazione di inferenza non consentita nello stato corrente: ${this.internalState}`);
         }
         
-        if (!this.llmPipeline) {
-            throw new Error('Transformers.js pipeline non inizializzato');
+        if (!this.localGgufFile) {
+            throw new Error('Nessun file GGUF locale caricato');
         }
         
         this.executionScheduler.enqueue({
@@ -113,6 +104,22 @@ export class OuroborosKernel {
                         index: 0,
                         total: routingPath.requiredTensors.length
                     });
+                    
+                    // Inizializza Transformers.js con il file GGUF locale se non già fatto
+                    if (!this.llmPipeline) {
+                        console.log('[STATE MACHINE] Initializing Transformers.js with local GGUF file...');
+                        const fileUrl = URL.createObjectURL(this.localGgufFile);
+                        
+                        this.llmPipeline = await pipeline('text-generation', fileUrl, {
+                            quantized: true,
+                            device: this.hardwareProfile.primaryDriver === 'WebGPU' ? 'webgpu' : 'wasm',
+                            progress_callback: (progress) => {
+                                console.log('[TRANSFORMERS] Progress:', progress);
+                            }
+                        });
+                        
+                        console.log('[STATE MACHINE] Transformers.js pipeline initialized with local GGUF');
+                    }
                     
                     // VERA INFERENZA LLM con Transformers.js streaming
                     this.transitionTo('EXECUTION', { layer: 0 });
