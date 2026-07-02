@@ -172,17 +172,14 @@ export class GgufStreamer {
         // Leggi i primi 256 byte per debugging
         const debugBuffer = await this.readLocalSlice(0, 256);
         const debugView = new DataView(debugBuffer);
+        const debugBytes = new Uint8Array(debugBuffer);
         
         // Debug: stampa i primi 64 byte in hex
         console.log('[GGUF] First 64 bytes hex:');
         let hexString = '';
-        for (let i = 0; i < 64 && i < debugBuffer.byteLength; i++) {
-            const byte = debugBuffer[i];
-            if (byte !== undefined) {
-                hexString += byte.toString(16).padStart(2, '0') + ' ';
-            } else {
-                hexString += '?? ';
-            }
+        for (let i = 0; i < 64 && i < debugBytes.length; i++) {
+            const byte = debugBytes[i];
+            hexString += byte.toString(16).padStart(2, '0') + ' ';
         }
         console.log(hexString);
         
@@ -222,6 +219,7 @@ export class GgufStreamer {
         
         const headerBuffer = await this.readLocalSlice(0, maxHeaderSize);
         const view = new DataView(headerBuffer);
+        const headerBytes = new Uint8Array(headerBuffer);
         
         let offset = headerStartOffset;
         
@@ -262,13 +260,9 @@ export class GgufStreamer {
         // Debug: stampa 32 byte dopo il metadata per vedere cosa c'è
         console.log('[GGUF] 32 bytes after metadata:');
         let debugHex = '';
-        for (let i = 0; i < 32 && offset + i < headerBuffer.byteLength; i++) {
-            const byte = headerBuffer[offset + i];
-            if (byte !== undefined) {
-                debugHex += byte.toString(16).padStart(2, '0') + ' ';
-            } else {
-                debugHex += '?? ';
-            }
+        for (let i = 0; i < 32 && offset + i < headerBytes.length; i++) {
+            const byte = headerBytes[offset + i];
+            debugHex += byte.toString(16).padStart(2, '0') + ' ';
         }
         console.log(debugHex);
         
