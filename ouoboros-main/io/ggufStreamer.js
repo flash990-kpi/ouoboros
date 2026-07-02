@@ -69,9 +69,9 @@ export class GgufStreamer {
             for (const tensorInfo of tensorInfos) {
                 tensors.push({
                     name: tensorInfo.name,
-                    shape: tensorInfo.shape.map(dim => BigInt(dim)),
+                    shape: tensorInfo.shape.map(dim => Number(dim)),
                     dtype: tensorInfo.dtype,
-                    offset: BigInt(tensorInfo.offset || 0)
+                    offset: Number(tensorInfo.offset || 0)
                 });
             }
             
@@ -100,7 +100,7 @@ export class GgufStreamer {
                 // Calcola lunghezza in byte
                 let totalElements = 1;
                 for (const dim of shape) {
-                    totalElements *= Number(dim);
+                    totalElements *= dim;
                 }
                 
                 // Mappa dtype a dimensione in byte
@@ -127,7 +127,7 @@ export class GgufStreamer {
                 
                 const dtypeNumber = typeof dtype === 'number' ? dtype : 0;
                 const elementSize = dtypeMap[dtypeNumber] || 4;
-                const byteLength = BigInt(totalElements * elementSize);
+                const byteLength = totalElements * elementSize;
                 
                 // Estrai layer index dal nome (supporta vari formati)
                 const layerMatch = name.match(/blk\.(\d+)\./) || 
@@ -154,13 +154,15 @@ export class GgufStreamer {
                 ouroView.setUint32(ouroCursor, hashLow, true);
                 ouroView.setUint32(ouroCursor + 4, hashHigh, true);
                 
-                const offsetLow = offset >>> 0;
-                const offsetHigh = (offset / 0x100000000) >>> 0;
+                const offsetNum = Number(offset);
+                const offsetLow = offsetNum >>> 0;
+                const offsetHigh = (offsetNum / 0x100000000) >>> 0;
                 ouroView.setUint32(ouroCursor + 8, offsetLow, true);
                 ouroView.setUint32(ouroCursor + 12, offsetHigh, true);
                 
-                const byteLengthLow = byteLength >>> 0;
-                const byteLengthHigh = (byteLength / 0x100000000) >>> 0;
+                const byteLengthNum = Number(byteLength);
+                const byteLengthLow = byteLengthNum >>> 0;
+                const byteLengthHigh = (byteLengthNum / 0x100000000) >>> 0;
                 ouroView.setUint32(ouroCursor + 16, byteLengthLow, true);
                 ouroView.setUint32(ouroCursor + 20, byteLengthHigh, true);
                 
