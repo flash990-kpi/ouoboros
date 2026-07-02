@@ -64,37 +64,60 @@ export class OuroborosKernel {
      * Inietta un prompt nel motore di navigazione geometrica A.S.T.S.
      */
     submitInference(prompt, onTokenGenerated) {
+        console.log('[STATE MACHINE] submitInference called with prompt:', prompt);
+        console.log('[STATE MACHINE] Current state:', this.internalState);
+        
         if (this.internalState === 'BOOTSTRAPPING' || this.internalState === 'ERROR') {
             throw new Error(`Invocazione di inferenza non consentita nello stato corrente: ${this.internalState}`);
         }
+        
+        console.log('[STATE MACHINE] Enqueuing inference task...');
         this.executionScheduler.enqueue({
             id: `inference_session_${performance.now()}`,
             priority: 100,
             action: async () => {
                 try {
+                    console.log('[STATE MACHINE] Starting inference execution...');
                     // 1. FASE DI ANALISI GEOMETRICA
                     this.transitionTo('ANALYSIS');
+                    console.log('[STATE MACHINE] Predicting routing path...');
                     const routingPath = this.sparsityPredictor.predictRoutingPath(prompt);
+                    console.log('[STATE MACHINE] Routing path:', routingPath);
+                    
                     // Array fittizio di input corrispondente all'embedding del token corrente (Dimensione standard 4096)
                     const inputVectorSize = 4096;
                     const liveInputBuffer = new Float32Array(inputVectorSize);
                     liveInputBuffer.fill(0.125); // Valore normalizzato statico di attivazione iniziale
                     let executionCounter = 0;
+                    
+                    console.log('[STATE MACHINE] Required tensors:', routingPath.requiredTensors.length);
+                    
                     // 2. LOOP SEQUENZIALE A.S.T.S. CHIRURGICO SUI TENSORI RICHIESTI
                     for (const tensorRecord of routingPath.requiredTensors) {
                         executionCounter++;
+                        console.log(`[STATE MACHINE] Processing tensor ${executionCounter}/${routingPath.requiredTensors.length}:`, tensorRecord);
+                        
                         this.transitionTo('SYNTHESIS', {
                             hash: tensorRecord.tensorHash,
                             index: executionCounter,
                             total: routingPath.requiredTensors.length
                         });
+                        
                         // Lettura mirata dei byte dall'offset calcolato
+                        console.log('[STATE MACHINE] Reading weight chunk...');
                         const rawBytes = await this.fileStreamer.readWeightChunk(tensorRecord.ggufOffset, tensorRecord.byteLength);
+                        console.log('[STATE MACHINE] Weight chunk read, size:', rawBytes.byteLength);
+                        
                         // Rigenerazione matematica immediata nel SharedArrayBuffer
+                        console.log('[STATE MACHINE] Synthesizing tensor...');
                         const sharedWeights = this.weightSynthesizer.synthesizeTensor(rawBytes, tensorRecord.tensorType, routingPath.targetRank);
+                        console.log('[STATE MACHINE] Tensor synthesized');
+                        
                         this.transitionTo('EXECUTION', { layer: tensorRecord.layerIndex });
+                        
                         let computeResult;
                         // Dirottamento atomico al driver hardware corrispondente
+                        console.log('[STATE MACHINE] Executing on driver:', this.hardwareProfile.primaryDriver);
                         if (this.hardwareProfile.primaryDriver === 'WebNN') {
                             computeResult = await this.driverWebNn.executePayload(sharedWeights, liveInputBuffer);
                         }
@@ -104,10 +127,16 @@ export class OuroborosKernel {
                         else {
                             computeResult = await this.driverWasm.executePayload(sharedWeights, liveInputBuffer);
                         }
+                        
+                        console.log('[STATE MACHINE] Compute result:', computeResult);
+                        
                         // Campionamento deterministico dell'output del calcolo hardware per estrarre il token ASCII
                         const extractionIndex = Math.min(Math.floor(Math.abs(computeResult[0] * 100)), computeResult.length - 1);
                         const asciiCode = (Math.floor(Math.abs(computeResult[extractionIndex])) % 95) + 32;
                         const generatedToken = String.fromCharCode(asciiCode);
+                        
+                        console.log('[STATE MACHINE] Generated token:', generatedToken);
+                        
                         // Ritorno immediato della metrica e del token alla UI WebSockets
                         onTokenGenerated(generatedToken, {
                             layer: tensorRecord.layerIndex,
@@ -117,8 +146,10 @@ export class OuroborosKernel {
                         });
                     }
                     this.transitionTo('IDLE');
+                    console.log('[STATE MACHINE] Inference completed successfully');
                 }
                 catch (err) {
+                    console.error('[STATE MACHINE] Inference error:', err);
                     this.transitionTo('ERROR', { reason: err.message });
                 }
             }
