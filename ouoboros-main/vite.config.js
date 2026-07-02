@@ -1,16 +1,10 @@
 import { defineConfig } from 'vite';
-import legacy from '@vitejs/plugin-legacy';
 
 export default defineConfig({
-  plugins: [
-    legacy({
-      targets: ['defaults', 'not IE 11'],
-      additionalLegacyPolyfills: ['regenerator-runtime/runtime']
-    })
-  ],
   build: {
     outDir: 'dist',
     assetsDir: 'assets',
+    target: 'es2020', // Modern browsers with BigInt support
     rollupOptions: {
       input: {
         main: './index.html'
@@ -18,7 +12,10 @@ export default defineConfig({
       output: {
         entryFileNames: 'assets/[name].js',
         chunkFileNames: 'assets/[name].js',
-        assetFileNames: 'assets/[name].[ext]'
+        assetFileNames: 'assets/[name].[ext]',
+        manualChunks: {
+          'transformers': ['@xenova/transformers']
+        }
       }
     },
     chunkSizeWarningLimit: 1000
