@@ -42,169 +42,52 @@ export class GgufStreamer {
         }
     }
     
-    // Genera l'indice topologico .ouro dal file GGUF usando Web Streams
+    // Genera l'indice topologico .ouro dal file GGUF usando hyllama (official web-compatible parser)
     async generateTopologyFromGguf() {
         const file = this.source.fileObject;
         
         try {
-            console.log('[GGUF] Using Web Streams for large file support...');
+            console.log('[GGUF] Using hyllama (official web-compatible GGUF parser)...');
             console.log(`[GGUF] File size: ${file.size} bytes`);
             
-            // Leggi i primi 256 byte per il header
-            console.log('[GGUF] Reading first 256 bytes...');
-            const headerBytes = await this.readStreamChunk(0, 256);
+            // Leggi i primi 10MB per il header (sufficiente per metadata e tensor info)
+            console.log('[GGUF] Reading first 10MB for header...');
+            const headerBytes = await this.readLocalSlice(0, 10 * 1024 * 1024);
             console.log(`[GGUF] Read ${headerBytes.byteLength} bytes`);
             
-            const headerView = new DataView(headerBytes);
-            const headerArray = new Uint8Array(headerBytes);
+            // Usa hyllama per parsare il GGUF
+            const { ggufMetadata } = await import('hyllama');
+            const { metadata, tensorInfos } = ggufMetadata(headerBytes);
             
-            // Debug hex dump
-            console.log('[GGUF] First 32 bytes hex:');
-            let hex = '';
-            for (let i = 0; i < 32; i++) {
-                hex += headerArray[i].toString(16).padStart(2, '0') + ' ';
-            }
-            console.log(hex);
+            console.log('[GGUF] Parsed with hyllama:', {
+                tensorCount: tensorInfos.length,
+                metadataKeys: Object.keys(metadata)
+            });
             
-            // Check magic number
-            const magic = headerView.getUint32(0, true);
-            console.log(`[GGUF] Magic: 0x${magic.toString(16)}`);
-            if (magic !== 0x46554747) {
-                throw new Error(`Magic number GGUF non valido: 0x${magic.toString(16)}`);
-            }
-            
-            const version = headerView.getUint32(4, true);
-            const tensorCount = Number(headerView.getBigUint64(8, true));
-            const metadataKVCount = Number(headerView.getBigUint64(16, true));
-            
-            console.log(`[GGUF] Version: ${version}, Tensors: ${tensorCount}, Metadata: ${metadataKVCount}`);
-            
-            // GGUF v3 ha alignment field
-            let alignment = 32;
-            let headerStartOffset = 24;
-            if (version >= 3) {
-                alignment = headerView.getUint32(24, true);
-                headerStartOffset = 28;
-                console.log(`[GGUF] Alignment: ${alignment}`);
-            }
-            
-            // Calcola dimensione header stimata
-            const estimatedHeaderSize = headerStartOffset + (metadataKVCount * 100) + (tensorCount * 100);
-            const maxHeaderSize = Math.min(estimatedHeaderSize, 50 * 1024 * 1024); // Max 50MB
-            
-            console.log(`[GGUF] Reading header: ${maxHeaderSize / 1024 / 1024}MB`);
-            const headerBuffer = await this.readStreamChunk(0, maxHeaderSize);
-            console.log(`[GGUF] Header buffer size: ${headerBuffer.byteLength} bytes`);
-            
-            const view = new DataView(headerBuffer);
-            const headerArrayFull = new Uint8Array(headerBuffer);
-            
-            let offset = headerStartOffset;
-            console.log(`[GGUF] Starting offset: ${offset}`);
-            
-            // Skip metadata
-            console.log(`[GGUF] Skipping ${metadataKVCount} metadata entries...`);
-            for (let i = 0; i < metadataKVCount; i++) {
-                if (offset + 8 > headerBuffer.byteLength) {
-                    console.warn(`[GGUF] Break at metadata ${i}: offset ${offset} > ${headerBuffer.byteLength}`);
-                    break;
-                }
-                const keyLen = Number(view.getBigUint64(offset, true));
-                offset += 8 + keyLen + 4; // keyLen + key + type
-                const type = view.getUint32(offset - 4, true);
-                offset = this.skipValue(view, offset, type, headerBuffer.byteLength);
-            }
-            console.log(`[GGUF] After metadata, offset: ${offset}`);
-            
-            // Debug: mostra 32 byte dopo metadata
-            console.log('[GGUF] 32 bytes after metadata:');
-            let debugHex = '';
-            for (let i = 0; i < 32 && offset + i < headerArrayFull.length; i++) {
-                debugHex += headerArrayFull[offset + i].toString(16).padStart(2, '0') + ' ';
-            }
-            console.log(debugHex);
-            
-            // Parse tensors
+            // Converti i tensori dal formato hyllama al nostro formato
             const tensors = [];
-            for (let i = 0; i < tensorCount; i++) {
-                if (offset + 8 > headerBuffer.byteLength) {
-                    console.warn(`[GGUF] Break at tensor ${i}: offset ${offset} > ${headerBuffer.byteLength}`);
-                    break;
-                }
-                
-                // nameLen: 8 byte (uint64_t)
-                const nameLen = Number(view.getBigUint64(offset, true));
-                console.log(`[GGUF] Tensor ${i}: nameLen=${nameLen} at offset=${offset}`);
-                offset += 8;
-                
-                if (offset + nameLen > headerBuffer.byteLength) {
-                    console.warn(`[GGUF] Break at tensor ${i}: nameLen ${nameLen} exceeds buffer`);
-                    break;
-                }
-                const name = new TextDecoder().decode(headerArrayFull.slice(offset, offset + nameLen));
-                console.log(`[GGUF] Tensor ${i}: name="${name}"`);
-                offset += nameLen;
-                
-                if (offset + 4 > headerBuffer.byteLength) {
-                    console.warn(`[GGUF] Break at tensor ${i}: cannot read nDims`);
-                    break;
-                }
-                // nDims: 4 byte (uint32_t)
-                const nDims = view.getUint32(offset, true);
-                console.log(`[GGUF] Tensor ${i}: nDims=${nDims}`);
-                offset += 4;
-                
-                const shape = [];
-                for (let j = 0; j < nDims; j++) {
-                    if (offset + 8 > headerBuffer.byteLength) {
-                        console.warn(`[GGUF] Break at tensor ${i}: cannot read shape[${j}]`);
-                        break;
-                    }
-                    // dimensions: 8 byte (uint64_t) per dimensione
-                    shape.push(view.getBigUint64(offset, true));
-                    offset += 8;
-                }
-                
-                if (offset + 4 > headerBuffer.byteLength) {
-                    console.warn(`[GGUF] Break at tensor ${i}: cannot read type`);
-                    break;
-                }
-                // type: 4 byte (uint32_t)
-                const dtype = view.getUint32(offset, true);
-                offset += 4;
-                
-                if (offset + 8 > headerBuffer.byteLength) {
-                    console.warn(`[GGUF] Break at tensor ${i}: cannot read offset`);
-                    break;
-                }
-                // offset: 8 byte (uint64_t)
-                const tensorOffset = view.getBigUint64(offset, true);
-                offset += 8;
-                
-                tensors.push({ name, shape, dtype, offset: tensorOffset });
-                console.log(`[GGUF] Tensor ${i} parsed: offset=${tensorOffset}, shape=[${shape.join(',')}]`);
-                
-                if ((i + 1) % 100 === 0) {
-                    console.log(`[GGUF] Parsed ${i + 1}/${tensorCount} tensors`);
-                }
+            for (const tensorInfo of tensorInfos) {
+                tensors.push({
+                    name: tensorInfo.name,
+                    shape: tensorInfo.shape.map(dim => BigInt(dim)),
+                    dtype: tensorInfo.dtype,
+                    offset: BigInt(tensorInfo.offset || 0)
+                });
             }
             
-            console.log(`[GGUF] Successfully parsed ${tensors.length}/${tensorCount} tensors`);
-            
-            if (tensors.length === 0) {
-                throw new Error('Nessun tensore parsato. Header buffer potrebbe essere troppo piccolo.');
-            }
-            
-            // Genera .ouro
-            const tensorCountParsed = tensors.length;
+            const tensorCount = tensors.length;
             let maxLayerFound = 0;
             
-            const ouroBuffer = new ArrayBuffer(32 + (tensorCountParsed * 48));
+            // Buffer .ouro: magic + version + tensorCount + layerCount + record per tensore (48 byte ciascuno)
+            const ouroBuffer = new ArrayBuffer(32 + (tensorCount * 48));
             const ouroView = new DataView(ouroBuffer);
             
+            // Magic "OURO"
             ouroView.setUint32(0, 0x4f55524f, true);
+            // Version
             ouroView.setUint32(4, 1, true);
-            ouroView.setUint32(8, tensorCountParsed, true);
+            // Tensor count
+            ouroView.setUint32(8, tensorCount, true);
             
             let ouroCursor = 32;
             
@@ -214,18 +97,47 @@ export class GgufStreamer {
                 const shape = tensor.shape;
                 const dtype = tensor.dtype;
                 
+                // Calcola lunghezza in byte
                 let totalElements = 1;
-                for (const dim of shape) totalElements *= Number(dim);
+                for (const dim of shape) {
+                    totalElements *= Number(dim);
+                }
                 
-                const dtypeMap = { 0: 4, 1: 2, 2: 2, 3: 2, 4: 2, 5: 2, 6: 1, 7: 1, 8: 4, 9: 4, 10: 4, 11: 4, 12: 4, 13: 4, 14: 1, 15: 2, 16: 4, 17: 8 };
+                // Mappa dtype a dimensione in byte
+                const dtypeMap = {
+                    0: 4, // F32
+                    1: 2, // F16
+                    2: 2, // Q4_0
+                    3: 2, // Q4_1
+                    4: 2, // Q5_0
+                    5: 2, // Q5_1
+                    6: 1, // Q8_0
+                    7: 1, // Q8_1
+                    8: 4, // Q2_K
+                    9: 4, // Q3_K
+                    10: 4, // Q4_K
+                    11: 4, // Q5_K
+                    12: 4, // Q6_K
+                    13: 4, // Q8_K
+                    14: 1, // I8
+                    15: 2, // I16
+                    16: 4, // I32
+                    17: 8, // I64
+                };
+                
                 const dtypeNumber = typeof dtype === 'number' ? dtype : 0;
                 const elementSize = dtypeMap[dtypeNumber] || 4;
                 const byteLength = BigInt(totalElements * elementSize);
                 
-                const layerMatch = name.match(/blk\.(\d+)\./) || name.match(/layers\.(\d+)\./) || name.match(/layer\.(\d+)\./);
+                // Estrai layer index dal nome (supporta vari formati)
+                const layerMatch = name.match(/blk\.(\d+)\./) || 
+                                  name.match(/layers\.(\d+)\./) ||
+                                  name.match(/layer\.(\d+)\./);
                 const layerIndex = layerMatch ? parseInt(layerMatch[1], 10) : 0;
-                if (layerIndex > maxLayerFound) maxLayerFound = layerIndex;
+                if (layerIndex > maxLayerFound)
+                    maxLayerFound = layerIndex;
                 
+                // Sparsity rank (euristica migliorata)
                 let sparsityRank = 4;
                 if (name.includes("ffn_down") || name.includes("v_proj") || name.includes("down_proj"))
                     sparsityRank = 1;
@@ -236,18 +148,21 @@ export class GgufStreamer {
                 
                 const tensorHash = TopologyParser.hashTensorName(name);
                 
+                // Scrittura record
                 ouroView.setBigUint64(ouroCursor, tensorHash, true);
                 ouroView.setBigUint64(ouroCursor + 8, offset, true);
                 ouroView.setBigUint64(ouroCursor + 16, byteLength, true);
                 ouroView.setUint32(ouroCursor + 24, layerIndex, true);
                 ouroView.setUint32(ouroCursor + 28, dtypeNumber, true);
                 ouroView.setUint32(ouroCursor + 32, sparsityRank, true);
-                ouroView.setBigUint64(ouroCursor + 36, 0n, true);
+                ouroView.setBigUint64(ouroCursor + 36, 0n, true); // riservato
                 ouroCursor += 48;
             }
             
+            // Scrittura layer count
             ouroView.setUint32(12, maxLayerFound + 1, true);
             
+            // Salva automaticamente il file .ouro
             this.saveOuroToDisk(ouroBuffer, file.name);
             return ouroBuffer;
         }
@@ -257,93 +172,6 @@ export class GgufStreamer {
                 `Errore nel parsing del file GGUF: ${error.message}. ` +
                 'Assicurati che il file sia un GGUF valido.'
             );
-        }
-    }
-    
-    // Leggi chunk usando Web Streams API
-    async readStreamChunk(offset, length) {
-        const file = this.source.fileObject;
-        console.log(`[GGUF] Reading stream chunk: offset=${offset}, length=${length}`);
-        
-        try {
-            const stream = file.stream();
-            const reader = stream.getReader();
-            
-            // Skip bytes prima dell'offset
-            let bytesSkipped = 0;
-            while (bytesSkipped < offset) {
-                const { done, value } = await reader.read();
-                if (done) break;
-                bytesSkipped += value.length;
-            }
-            
-            // Leggi i byte richiesti
-            const chunks = [];
-            let bytesRead = 0;
-            
-            while (bytesRead < length) {
-                const { done, value } = await reader.read();
-                if (done) break;
-                
-                const remaining = length - bytesRead;
-                if (value.length <= remaining) {
-                    chunks.push(value);
-                    bytesRead += value.length;
-                } else {
-                    chunks.push(value.slice(0, remaining));
-                    bytesRead += remaining;
-                }
-            }
-            
-            reader.releaseLock();
-            
-            const totalLength = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
-            const result = new Uint8Array(totalLength);
-            let position = 0;
-            
-            for (const chunk of chunks) {
-                result.set(chunk, position);
-                position += chunk.length;
-            }
-            
-            console.log(`[GGUF] Read ${totalLength} bytes via streams`);
-            return result.buffer;
-        } catch (e) {
-            console.error('[GGUF] Stream error:', e);
-            // Fallback a FileReader
-            return this.readLocalSlice(offset, length);
-        }
-    }
-    
-    // Skip GGUF value
-    skipValue(view, offset, type, maxOffset) {
-        switch (type) {
-            case 0: case 1: return offset + 1;
-            case 2: return offset + 2;
-            case 3: return offset + 4;
-            case 4: return offset + 8;
-            case 5: case 6: return offset + 1;
-            case 7: return offset + 2;
-            case 8: return offset + 4;
-            case 9: return offset + 8;
-            case 10: return offset + 4;
-            case 11: return offset + 8;
-            case 12: return offset + 1;
-            case 13:
-                if (offset + 4 > maxOffset) return offset;
-                const len = view.getUint32(offset, true);
-                return offset + 4 + len;
-            case 14:
-                if (offset + 8 > maxOffset) return offset;
-                const arrayLen = view.getUint32(offset, true);
-                offset += 4;
-                const arrayType = view.getUint32(offset, true);
-                offset += 4;
-                for (let i = 0; i < arrayLen; i++) {
-                    offset = this.skipValue(view, offset, arrayType, maxOffset);
-                }
-                return offset;
-            default: return offset + 4;
         }
     }
     
