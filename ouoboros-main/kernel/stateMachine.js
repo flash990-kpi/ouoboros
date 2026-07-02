@@ -178,19 +178,37 @@ export class OuroborosKernel {
      * Estrae token dal risultato hardware con sampling intelligente
      */
     extractTokenFromComputeResult(computeResult, prompt, layerIndex) {
-        // Sampling basato su distribuzione probabilistica
-        const sum = computeResult.reduce((a, b) => a + Math.abs(b), 0);
-        const avg = sum / computeResult.length;
+        // Usa più valori dal compute result per variazione
+        const resultLength = computeResult.length;
         
-        // Usa il risultato per selezionare un carattere sensato
-        const charCodes = prompt.split('').map(c => c.charCodeAt(0));
-        const baseCode = charCodes.reduce((a, b) => a + b, 0) / charCodes.length || 65;
+        // Prendi valori da diverse posizioni per variazione
+        const v1 = Math.abs(computeResult[layerIndex % resultLength]);
+        const v2 = Math.abs(computeResult[(layerIndex + 7) % resultLength]);
+        const v3 = Math.abs(computeResult[(layerIndex + 13) % resultLength]);
+        const v4 = Math.abs(computeResult[(layerIndex + 23) % resultLength]);
         
-        // Modula in base al layer e risultato computazionale
-        const modulation = (computeResult[layerIndex % computeResult.length] * 100) % 26;
-        const finalCode = Math.floor(baseCode + modulation) % 128;
+        // Combina i valori per creare un indice con più entropia
+        const combined = (v1 * 1000 + v2 * 500 + v3 * 250 + v4 * 125) % 10000;
         
-        return String.fromCharCode(Math.max(32, Math.min(126, finalCode)));
+        // Usa il prompt come base per variazione
+        const promptIndex = layerIndex % prompt.length;
+        const baseChar = prompt[promptIndex] || 'a';
+        const baseCode = baseChar.charCodeAt(0);
+        
+        // Aggiungi variazione temporale basata su layerIndex
+        const timeVariation = Math.sin(layerIndex * 0.5) * 20;
+        
+        // Aggiungi elemento casuale per garantire variazione
+        const randomVariation = (Math.random() - 0.5) * 40;
+        
+        // Modula in base al risultato computazionale con più variazione
+        const modulation = Math.floor(combined % 60) - 30 + timeVariation + randomVariation;
+        const finalCode = Math.floor(baseCode + modulation);
+        
+        // Assicura che sia un carattere stampabile
+        const clampedCode = Math.max(32, Math.min(126, finalCode));
+        
+        return String.fromCharCode(clampedCode);
     }
     
     /**
@@ -198,7 +216,7 @@ export class OuroborosKernel {
      */
     updateInputBuffer(inputBuffer, computeResult) {
         // Feedback con normalizzazione per evitare overflow
-        const mixFactor = 0.05; // Ridotto per stabilità
+        const mixFactor = 0.1; // Aumentato per più variazione
         
         // Normalizza compute result
         const maxVal = Math.max(...computeResult.map(Math.abs));
