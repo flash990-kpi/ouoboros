@@ -64,11 +64,11 @@ export class OuroborosKernel {
             this.localGgufFile = source.fileObject;
             
             // Inizializza Transformers.js con modello pre-addestrato per inferenza vera
-            // Usiamo un modello compatibile con GGUF che funziona localmente
+            // Usiamo un modello instruction-tuned per risposte appropriate
             console.log('[STATE MACHINE] Initializing Transformers.js pipeline...');
             
-            // Usa un modello più piccolo e compatibile per remote loading
-            this.llmPipeline = await pipeline('text-generation', 'Xenova/distilgpt2', {
+            // Usa un modello instruction-tuned per risposte sensate
+            this.llmPipeline = await pipeline('text2text-generation', 'Xenova/flan-t5-small', {
                 quantized: true,
                 device: this.hardwareProfile.primaryDriver === 'WebGPU' ? 'webgpu' : 'wasm',
                 progress_callback: (progress) => {
@@ -121,13 +121,11 @@ export class OuroborosKernel {
                     // VERA INFERENZA LLM con Transformers.js streaming
                     this.transitionTo('EXECUTION', { layer: 0 });
                     
-                    // Generazione con streaming dei token
+                    // Generazione con streaming dei token (text2text-generation)
                     const output = await this.llmPipeline(prompt, {
-                        max_new_tokens: 200,
+                        max_new_tokens: 100,
                         temperature: 0.7,
-                        top_p: 0.95,
-                        do_sample: true,
-                        return_full_text: false
+                        do_sample: true
                     });
                     
                     // Streaming dei token per compatibilità UI
