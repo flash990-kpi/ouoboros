@@ -148,14 +148,28 @@ export class GgufStreamer {
                 
                 const tensorHash = TopologyParser.hashTensorName(name);
                 
-                // Scrittura record
-                ouroView.setBigUint64(ouroCursor, tensorHash, true);
-                ouroView.setBigUint64(ouroCursor + 8, offset, true);
-                ouroView.setBigUint64(ouroCursor + 16, byteLength, true);
+                // Scrittura record - split 64-bit values into two 32-bit parts (no BigInt)
+                const hashLow = tensorHash >>> 0;
+                const hashHigh = (tensorHash / 0x100000000) >>> 0;
+                ouroView.setUint32(ouroCursor, hashLow, true);
+                ouroView.setUint32(ouroCursor + 4, hashHigh, true);
+                
+                const offsetLow = offset >>> 0;
+                const offsetHigh = (offset / 0x100000000) >>> 0;
+                ouroView.setUint32(ouroCursor + 8, offsetLow, true);
+                ouroView.setUint32(ouroCursor + 12, offsetHigh, true);
+                
+                const byteLengthLow = byteLength >>> 0;
+                const byteLengthHigh = (byteLength / 0x100000000) >>> 0;
+                ouroView.setUint32(ouroCursor + 16, byteLengthLow, true);
+                ouroView.setUint32(ouroCursor + 20, byteLengthHigh, true);
+                
                 ouroView.setUint32(ouroCursor + 24, layerIndex, true);
                 ouroView.setUint32(ouroCursor + 28, dtypeNumber, true);
                 ouroView.setUint32(ouroCursor + 32, sparsityRank, true);
-                ouroView.setBigUint64(ouroCursor + 36, 0n, true); // riservato
+                // Use two Uint32 for 64-bit value (compatibility with older browsers)
+                ouroView.setUint32(ouroCursor + 36, 0, true);
+                ouroView.setUint32(ouroCursor + 40, 0, true);
                 ouroCursor += 48;
             }
             
