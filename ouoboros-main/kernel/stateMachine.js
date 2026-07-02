@@ -7,7 +7,7 @@ import { SparsityPredictor } from '../asts/sparsityPredictor.js';
 import { WeightSynthesizer } from '../asts/weightSynthesizer.js';
 import { GgufStreamer } from '../io/ggufStreamer.js';
 import { Scheduler } from './scheduler.js';
-import { pipeline, env } from '@xenova/transformers';
+import { GGUFTransformer } from './ggufTransformer.js';
 export class OuroborosKernel {
     constructor(stateChangeNotifier) {
         this.internalState = 'BOOTSTRAPPING';
@@ -20,14 +20,9 @@ export class OuroborosKernel {
         this.topologyParser = new TopologyParser();
         this.weightSynthesizer = new WeightSynthesizer();
         this.onStateChange = stateChangeNotifier;
-        // Transformers.js pipeline per vera inferenza LLM
-        this.llmPipeline = null;
+        // GGUF Transformer per inferenza diretta con file GGUF dell'utente
+        this.ggufTransformer = new GGUFTransformer();
         this.localGgufFile = null;
-        
-        // Configura Transformers.js per uso locale e performance
-        env.allowLocalModels = true;
-        env.useBrowserCache = true;
-        env.allowRemoteModels = true; // Permetti download modelli remoti
     }
     /**
      * Inizializza l'architettura. Se il buffer .ouro è null,
@@ -63,20 +58,12 @@ export class OuroborosKernel {
             // Salva il file GGUF locale fornito dall'utente
             this.localGgufFile = source.fileObject;
             
-            // Inizializza Transformers.js con modello pre-addestrato per inferenza vera
-            // Usiamo un modello instruction-tuned per risposte appropriate
-            console.log('[STATE MACHINE] Initializing Transformers.js pipeline...');
+            // Inizializza GGUF Transformer per inferenza diretta con file GGUF dell'utente
+            console.log('[STATE MACHINE] Initializing GGUF Transformer...');
             
-            // Usa un modello instruction-tuned per risposte sensate
-            this.llmPipeline = await pipeline('text2text-generation', 'Xenova/flan-t5-small', {
-                quantized: true,
-                device: this.hardwareProfile.primaryDriver === 'WebGPU' ? 'webgpu' : 'wasm',
-                progress_callback: (progress) => {
-                    console.log('[TRANSFORMERS] Progress:', progress);
-                }
-            });
+            await this.ggufTransformer.loadGGUF(this.localGgufFile);
             
-            console.log('[STATE MACHINE] Transformers.js pipeline initialized with', this.hardwareProfile.primaryDriver);
+            console.log('[STATE MACHINE] GGUF Transformer initialized with user GGUF file');
             
             this.transitionTo('IDLE', {
                 driver: this.hardwareProfile.primaryDriver,
@@ -91,15 +78,15 @@ export class OuroborosKernel {
     }
     /**
      * Inietta un prompt nel motore di navigazione geometrica A.S.T.S.
-     * Usa Transformers.js per vera inferenza LLM con streaming.
+     * Usa GGUF Transformer per inferenza diretta con file GGUF dell'utente.
      */
     submitInference(prompt, onTokenGenerated) {
         if (this.internalState === 'BOOTSTRAPPING' || this.internalState === 'ERROR') {
             throw new Error(`Invocazione di inferenza non consentita nello stato corrente: ${this.internalState}`);
         }
         
-        if (!this.llmPipeline) {
-            throw new Error('Transformers.js pipeline non inizializzato');
+        if (!this.ggufTransformer) {
+            throw new Error('GGUF Transformer non inizializzato');
         }
         
         this.executionScheduler.enqueue({
@@ -118,27 +105,19 @@ export class OuroborosKernel {
                         total: routingPath.requiredTensors.length
                     });
                     
-                    // VERA INFERENZA LLM con Transformers.js streaming
+                    // VERA INFERENZA con GGUF Transformer usando file GGUF dell'utente
                     this.transitionTo('EXECUTION', { layer: 0 });
                     
-                    // Generazione con streaming dei token (text2text-generation)
-                    const output = await this.llmPipeline(prompt, {
-                        max_new_tokens: 100,
-                        temperature: 0.7,
-                        do_sample: true
-                    });
+                    // Generazione con streaming dei token usando GGUF Transformer
+                    const generator = this.ggufTransformer.generate(prompt, 100, 0.7);
                     
-                    // Streaming dei token per compatibilità UI
-                    const generatedText = output[0].generated_text;
-                    for (let i = 0; i < generatedText.length; i++) {
-                        onTokenGenerated(generatedText[i], {
+                    for await (const token of generator) {
+                        onTokenGenerated(token, {
                             layer: 0,
                             rank: routingPath.targetRank,
                             compression: routingPath.dynamicCompressionRatio,
                             activeNodes: routingPath.requiredTensors.length
                         });
-                        // Small delay per streaming effect
-                        await new Promise(resolve => setTimeout(resolve, 10));
                     }
                     
                     this.transitionTo('IDLE');
