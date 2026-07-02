@@ -270,14 +270,15 @@ export class GgufStreamer {
         const tensors = [];
         for (let i = 0; i < tensorCount; i++) {
             try {
-                if (offset + 4 > headerBuffer.byteLength) {
+                if (offset + 8 > headerBuffer.byteLength) {
                     console.warn(`[GGUF] Cannot read tensor nameLen at ${i}, stopping`);
                     break;
                 }
                 
-                const nameLen = view.getUint32(offset, true);
+                // nameLen: 8 byte (uint64_t) in tutte le versioni GGUF
+                const nameLen = Number(view.getBigUint64(offset, true));
                 console.log(`[GGUF] Tensor ${i}: nameLen = ${nameLen} at offset ${offset}`);
-                offset += 4;
+                offset += 8;
                 
                 // Sanity check: nameLen non dovrebbe essere > 1000
                 if (nameLen > 10000) {
@@ -311,12 +312,13 @@ export class GgufStreamer {
                 
                 const shape = [];
                 for (let j = 0; j < nDims; j++) {
-                    if (offset + 4 > headerBuffer.byteLength) {
+                    if (offset + 8 > headerBuffer.byteLength) {
                         console.warn(`[GGUF] Cannot read shape[${j}] at tensor ${i}, stopping`);
                         break;
                     }
-                    shape.push(view.getUint32(offset, true));
-                    offset += 4;
+                    // dimensions: 8 byte (uint64_t) per dimensione
+                    shape.push(view.getBigUint64(offset, true));
+                    offset += 8;
                 }
                 
                 if (offset + 4 > headerBuffer.byteLength) {
@@ -332,11 +334,9 @@ export class GgufStreamer {
                     break;
                 }
                 
-                const offsetLow = view.getUint32(offset, true);
-                offset += 4;
-                const offsetHigh = view.getUint32(offset, true);
-                offset += 4;
-                const tensorOffset = (BigInt(offsetHigh) << 32n) | BigInt(offsetLow);
+                // offset: 8 byte (uint64_t)
+                const tensorOffset = view.getBigUint64(offset, true);
+                offset += 8;
                 
                 tensors.push({
                     name,
