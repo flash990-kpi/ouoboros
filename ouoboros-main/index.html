@@ -569,8 +569,11 @@
                 else if (type === 'token') {
                     let bucket = terminal.querySelector('.token-bucket');
                     if (!bucket) {
-                        bucket = document.createElement('span');
+                        bucket = document.createElement('div');
                         bucket.className = 'token-bucket';
+                        bucket.style.display = 'inline';
+                        bucket.style.whiteSpace = 'pre-wrap';
+                        bucket.style.wordBreak = 'break-word';
                         terminal.appendChild(bucket);
                     }
                     bucket.textContent += msg;

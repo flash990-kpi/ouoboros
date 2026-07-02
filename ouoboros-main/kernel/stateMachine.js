@@ -73,37 +73,27 @@ export class OuroborosKernel {
      * Implementazione pura A.S.T.S. con streaming parziale dei pesi.
      */
     submitInference(prompt, onTokenGenerated) {
-        console.log('[STATE MACHINE] submitInference called with prompt:', prompt);
-        console.log('[STATE MACHINE] Current state:', this.internalState);
-        
         if (this.internalState === 'BOOTSTRAPPING' || this.internalState === 'ERROR') {
             throw new Error(`Invocazione di inferenza non consentita nello stato corrente: ${this.internalState}`);
         }
         
-        console.log('[STATE MACHINE] Enqueuing inference task...');
         this.executionScheduler.enqueue({
             id: `inference_session_${performance.now()}`,
             priority: 100,
             action: async () => {
                 try {
-                    console.log('[STATE MACHINE] Starting A.S.T.S. streaming inference...');
                     // 1. FASE DI ANALISI GEOMETRICA
                     this.transitionTo('ANALYSIS');
-                    console.log('[STATE MACHINE] Predicting routing path...');
                     const routingPath = this.sparsityPredictor.predictRoutingPath(prompt);
-                    console.log('[STATE MACHINE] Routing path:', routingPath);
                     
                     // Input embedding reale dal prompt (tokenizzazione semplice)
                     const inputVectorSize = 4096;
                     const liveInputBuffer = this.createPromptEmbedding(prompt, inputVectorSize);
                     let executionCounter = 0;
                     
-                    console.log('[STATE MACHINE] Required tensors:', routingPath.requiredTensors.length);
-                    
                     // 2. LOOP SEQUENZIALE A.S.T.S. CHIRURGICO SUI TENSORI RICHIESTI
                     for (const tensorRecord of routingPath.requiredTensors) {
                         executionCounter++;
-                        console.log(`[STATE MACHINE] Processing tensor ${executionCounter}/${routingPath.requiredTensors.length}:`, tensorRecord);
                         
                         this.transitionTo('SYNTHESIS', {
                             hash: tensorRecord.tensorHash,
@@ -112,19 +102,14 @@ export class OuroborosKernel {
                         });
                         
                         // STREAMING PARZIALE: Leggi solo i byte necessari dal file GGUF
-                        console.log('[STATE MACHINE] Streaming weight chunk from GGUF...');
                         const rawBytes = await this.fileStreamer.readWeightChunk(tensorRecord.ggufOffset, tensorRecord.byteLength);
-                        console.log('[STATE MACHINE] Weight chunk streamed, size:', rawBytes.byteLength);
                         
                         // SINTESI A.S.T.S.: Rigenerazione matematica nel SharedArrayBuffer
-                        console.log('[STATE MACHINE] Synthesizing tensor with A.S.T.S. formula...');
                         const sharedWeights = this.weightSynthesizer.synthesizeTensor(rawBytes, tensorRecord.tensorType, routingPath.targetRank);
-                        console.log('[STATE MACHINE] Tensor synthesized');
                         
                         this.transitionTo('EXECUTION', { layer: tensorRecord.layerIndex });
                         
                         // ESECUZIONE HARDWARE: Invio micro-buffer al driver
-                        console.log('[STATE MACHINE] Executing on driver:', this.hardwareProfile.primaryDriver);
                         let computeResult;
                         if (this.hardwareProfile.primaryDriver === 'WebNN') {
                             computeResult = await this.driverWebNn.executePayload(sharedWeights, liveInputBuffer);
@@ -136,11 +121,8 @@ export class OuroborosKernel {
                             computeResult = await this.driverWasm.executePayload(sharedWeights, liveInputBuffer);
                         }
                         
-                        console.log('[STATE MACHINE] Compute result:', computeResult);
-                        
                         // SAMPLING A.S.T.S.: Estrazione token dal risultato hardware
                         const token = this.extractTokenFromComputeResult(computeResult, prompt, executionCounter);
-                        console.log('[STATE MACHINE] Generated token:', token);
                         
                         // Ritorno immediato alla UI (streaming)
                         onTokenGenerated(token, {
@@ -154,7 +136,6 @@ export class OuroborosKernel {
                         this.updateInputBuffer(liveInputBuffer, computeResult);
                     }
                     this.transitionTo('IDLE');
-                    console.log('[STATE MACHINE] A.S.T.S. streaming inference completed successfully');
                 }
                 catch (err) {
                     console.error('[STATE MACHINE] Inference error:', err);
@@ -203,10 +184,22 @@ export class OuroborosKernel {
      * Aggiorna input buffer per feedback loop tra layer
      */
     updateInputBuffer(inputBuffer, computeResult) {
-        // Feedback semplice: mescola risultato computazionale nell'input
-        const mixFactor = 0.1;
-        for (let i = 0; i < Math.min(inputBuffer.length, computeResult.length); i++) {
-            inputBuffer[i] = inputBuffer[i] * (1 - mixFactor) + computeResult[i] * mixFactor;
+        // Feedback con normalizzazione per evitare overflow
+        const mixFactor = 0.05; // Ridotto per stabilità
+        
+        // Normalizza compute result
+        const maxVal = Math.max(...computeResult.map(Math.abs));
+        const normalizedResult = maxVal > 0 
+            ? computeResult.map(v => v / maxVal)
+            : computeResult;
+        
+        // Mescola con normalizzazione
+        for (let i = 0; i < Math.min(inputBuffer.length, normalizedResult.length); i++) {
+            inputBuffer[i] = inputBuffer[i] * (1 - mixFactor) + normalizedResult[i] * mixFactor;
+            
+            // Clipping per evitare overflow
+            if (inputBuffer[i] > 1.0) inputBuffer[i] = 1.0;
+            if (inputBuffer[i] < -1.0) inputBuffer[i] = -1.0;
         }
     }
     transitionTo(newState, payload) {
