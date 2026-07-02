@@ -12,13 +12,12 @@ export default defineConfig({
       output: {
         entryFileNames: 'assets/[name].js',
         chunkFileNames: 'assets/[name].js',
-        assetFileNames: 'assets/[name].[ext]',
-        manualChunks: {
-          'transformers': ['@xenova/transformers']
-        }
-      }
+        assetFileNames: 'assets/[name].[ext]'
+      },
+      // Bundle Transformers.js completely
+      external: []
     },
-    chunkSizeWarningLimit: 1000
+    chunkSizeWarningLimit: 2000 // Increase limit for large bundle
   },
   server: {
     port: 8080,
@@ -28,5 +27,9 @@ export default defineConfig({
       'Cross-Origin-Embedder-Policy': 'require-corp',
       'Cross-Origin-Resource-Policy': 'cross-origin'
     }
+  },
+  optimizeDeps: {
+    include: ['@xenova/transformers'],
+    force: true
   }
 });
