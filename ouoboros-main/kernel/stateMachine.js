@@ -27,7 +27,7 @@ export class OuroborosKernel {
         // Configura Transformers.js per uso locale e performance
         env.allowLocalModels = true;
         env.useBrowserCache = true;
-        env.allowRemoteModels = false;
+        env.allowRemoteModels = true; // Permetti download modelli remoti
     }
     /**
      * Inizializza l'architettura. Se il buffer .ouro è null,
@@ -67,7 +67,8 @@ export class OuroborosKernel {
             // Usiamo un modello compatibile con GGUF che funziona localmente
             console.log('[STATE MACHINE] Initializing Transformers.js pipeline...');
             
-            this.llmPipeline = await pipeline('text-generation', 'Xenova/LaMini-Flan-T5-783M', {
+            // Usa un modello più piccolo e compatibile per remote loading
+            this.llmPipeline = await pipeline('text-generation', 'Xenova/distilgpt2', {
                 quantized: true,
                 device: this.hardwareProfile.primaryDriver === 'WebGPU' ? 'webgpu' : 'wasm',
                 progress_callback: (progress) => {
