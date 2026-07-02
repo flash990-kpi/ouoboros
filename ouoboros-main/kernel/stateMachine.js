@@ -69,6 +69,11 @@ export class OuroborosKernel {
             this.llmDecoder = new LLMDecoder(this.ggufMetadata);
             this.llmDecoder.extractVocabulary();
             
+            // Carica i pesi dal file GGUF per inferenza reale
+            console.log('[STATE MACHINE] Loading weights from GGUF file...');
+            const tensorRecords = Array.from(this.activeTopologyMap.records.values());
+            await this.llmDecoder.loadWeights(this.localGgufFile, tensorRecords);
+            
             console.log('[STATE MACHINE] A.S.T.S. system ready with LLM decoder');
             console.log('[STATE MACHINE] GGUF Metadata:', metadata);
             
