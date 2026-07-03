@@ -28,7 +28,7 @@ export class OuroborosKernel {
      * Inizializza l'architettura. Se il buffer .ouro è null,
      * innesca automaticamente l'estrazione e generazione dall'header GGUF.
      */
-    async boot(source, ouroBuffer) {
+    async boot(source, ouroBuffer, parsedGGUF = null, streamerInstance = null) {
         try {
             this.transitionTo('BOOTSTRAPPING');
             const auditor = new HardwareAuditor();
@@ -44,7 +44,10 @@ export class OuroborosKernel {
             else {
                 await this.driverWasm.initialize();
             }
-            this.fileStreamer = new GgufStreamer(source);
+            
+            // Usa l'istanza streamer passata o creane una nuova
+            this.fileStreamer = streamerInstance || new GgufStreamer(source);
+            
             let finalOuroBuffer;
             if (!ouroBuffer) {
                 finalOuroBuffer = await this.fileStreamer.generateTopologyFromGguf();
@@ -58,13 +61,13 @@ export class OuroborosKernel {
             // Salva il file GGUF locale fornito dall'utente
             this.localGgufFile = source.fileObject;
             
-            // Inizializza GGUF Transformer con dati già parsati da ggufStreamer
+            // Inizializza GGUF Transformer con dati parsati
             console.log('[STATE MACHINE] Initializing GGUF Transformer...');
             
-            // Ottieni i dati parsati dal ggufStreamer
-            const parsedGGUF = await this.fileStreamer.getParsedGGUF();
+            // Usa i dati parsati passati come parametro o ottieni dal fileStreamer
+            const ggufData = parsedGGUF || await this.fileStreamer.getParsedGGUF();
             
-            await this.ggufTransformer.loadGGUF(parsedGGUF);
+            await this.ggufTransformer.loadGGUF(ggufData);
             
             console.log('[STATE MACHINE] GGUF Transformer initialized with user GGUF file');
             

@@ -758,12 +758,15 @@
                     };
 
                     kernel = new OuroborosKernel(stateNotifier);
-                    await kernel.boot(source, ouroBuffer);
 
                     const topology = new TopologyParser().parseIndex(ouroBuffer);
                     modelInfo.style.display = 'block';
                     modelInfo.textContent = `Tensori: ${topology.tensorCount} | Layer: ${topology.layerCount}`;
                     metricSandbox.innerHTML = `${(file.size / 1e9).toFixed(2)} <span class="unit">GB (streaming)</span>`;
+
+                    // Passa i dati GGUF parsati e l'istanza streamer al kernel
+                    const parsedGGUF = streamer.getParsedGGUF();
+                    await kernel.boot(source, ouroBuffer, parsedGGUF, streamer);
 
                 } catch (err) {
                     log(`ERRORE: ${err.message}`, 'error');
