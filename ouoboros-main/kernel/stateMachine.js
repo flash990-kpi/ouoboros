@@ -71,18 +71,40 @@ export class OuroborosKernel {
             
             // Carica il modello GGUF locale
             console.log('[STATE MACHINE] Loading local GGUF file with Wllama...');
+            console.log('[STATE MACHINE] File size:', this.localGgufFile.size, 'bytes (', (this.localGgufFile.size / 1e9).toFixed(2), 'GB)');
+            
+            // Check file size - WebAssembly memory has limits (~2-4GB max)
+            if (this.localGgufFile.size > 4 * 1024 * 1024 * 1024) {
+                console.warn('[STATE MACHINE] WARNING: File size exceeds 4GB, may fail in browser WebAssembly');
+                console.warn('[STATE MACHINE] Consider using a smaller model for browser inference');
+            }
             
             const progressCallback = ({ loaded, total }) => {
                 const progress = Math.round((loaded / total) * 100);
                 console.log(`[STATE MACHINE] Loading GGUF: ${progress}%`);
             };
             
-            await this.wllama.loadModel([this.localGgufFile], {
-                progressCallback,
-                n_gpu_layers: 35 // Offload 35 layers to GPU per modello grande
-            });
-            
-            console.log('[STATE MACHINE] Wllama loaded successfully with real GGUF model');
+            try {
+                await this.wllama.loadModel([this.localGgufFile], {
+                    progressCallback,
+                    n_gpu_layers: 35, // Offload 35 layers to GPU per modello grande
+                    n_ctx: 2048, // Context size
+                    use_mmap: true, // Use memory mapping for large files
+                });
+                
+                console.log('[STATE MACHINE] Wllama loaded successfully with real GGUF model');
+            } catch (error) {
+                console.error('[STATE MACHINE] Wllama load error:', error);
+                if (error.message.includes('offset is out of bounds') || error.message.includes('memory')) {
+                    throw new Error(
+                        'Model too large for browser WebAssembly memory. ' +
+                        'File size: ' + (this.localGgufFile.size / 1e9).toFixed(2) + 'GB. ' +
+                        'Browser WebAssembly memory limit: ~2-4GB. ' +
+                        'Please use a smaller model (<4GB) for browser inference.'
+                    );
+                }
+                throw error;
+            }
             
             this.transitionTo('IDLE', {
                 driver: this.hardwareProfile.primaryDriver,
