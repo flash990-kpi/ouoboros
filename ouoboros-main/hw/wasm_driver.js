@@ -35,16 +35,7 @@ export class WasmDriver {
             output[i] = sum;
         }
         
-        // Genera token dal risultato (simplificato per ora)
-        const token = this.generateTokenFromOutput(output);
-        
-        return { token, output };
-    }
-    
-    generateTokenFromOutput(output) {
-        // Generazione token semplificata dall'output CPU
-        const maxIndex = output.indexOf(Math.max(...output));
-        const token = String.fromCharCode(65 + (maxIndex % 26)); // A-Z
-        return token;
+        // Restituisci logits per sampling (non più lettere placeholder)
+        return { logits: output, output };
     }
 }

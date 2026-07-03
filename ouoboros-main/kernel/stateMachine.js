@@ -24,6 +24,10 @@ export class OuroborosKernel {
         this.localGgufFile = null;
         this.ggufStreamer = null;
         this.activeDriver = null; // WebNN (NPU), WebGPU (GPU), or WASM (CPU)
+        
+        // Tokenizer per generazione testo reale
+        this.tokenizer = null;
+        this.vocab = null;
     }
     /**
      * Inizializza l'architettura. Se il buffer .ouro è null,
@@ -78,6 +82,12 @@ export class OuroborosKernel {
             
             // Inizializza GGUF Streamer per streaming parziale pesi
             this.ggufStreamer = streamerInstance || new GgufStreamer(source);
+            
+            // Estrai vocabolario tokenizer dal GGUF parsato
+            if (parsedGGUF && parsedGGUF.metadata) {
+                this.vocab = this.extractVocabFromMetadata(parsedGGUF.metadata);
+                console.log('[STATE MACHINE] Extracted vocabulary:', Object.keys(this.vocab).length, 'tokens');
+            }
             
             // Inizializza driver selezionato
             console.log('[STATE MACHINE] Initializing hardware driver...');
@@ -175,9 +185,12 @@ export class OuroborosKernel {
                             routingPath
                         );
                         
-                        // Streaming token generato
-                        if (result.token) {
-                            onTokenGenerated(result.token, {
+                        // Usa logits per generare testo reale con sampling
+                        if (result.logits) {
+                            const tokenId = this.sampleTokenFromLogits(result.logits, 0.7, 40, 0.9);
+                            const tokenText = this.decodeToken(tokenId);
+                            
+                            onTokenGenerated(tokenText, {
                                 layer: tensorInfo.layer,
                                 rank: routingPath.targetRank,
                                 compression: routingPath.dynamicCompressionRatio,
@@ -204,6 +217,100 @@ export class OuroborosKernel {
         this.internalState = newState;
         this.onStateChange(newState, payload);
     }
+    
+    /**
+     * Estrai vocabolario tokenizer dal metadata GGUF
+     */
+    extractVocabFromMetadata(metadata) {
+        const vocab = {};
+        
+        // Cerca tokeni nel metadata GGUF
+        for (const [key, value] of Object.entries(metadata)) {
+            if (key.startsWith('tokenizer.ggml.token')) {
+                // Estrai ID token dal nome (es: tokenizer.ggml.token.123)
+                const tokenId = parseInt(key.split('.').pop(), 10);
+                if (!isNaN(tokenId)) {
+                    vocab[tokenId] = value;
+                }
+            }
+        }
+        
+        // Se non trovato, crea vocabolario base di fallback
+        if (Object.keys(vocab).length === 0) {
+            console.warn('[STATE MACHINE] No vocabulary found in metadata, creating fallback vocab');
+            for (let i = 0; i < 256; i++) {
+                vocab[i] = String.fromCharCode(i);
+            }
+        }
+        
+        return vocab;
+    }
+    
+    /**
+     * Converti logits in token usando sampling
+     */
+    sampleTokenFromLogits(logits, temperature = 0.7, topK = 40, topP = 0.9) {
+        // Applica temperature
+        const scaledLogits = logits.map(l => l / temperature);
+        
+        // Softmax per ottenere probabilità
+        const maxLogit = Math.max(...scaledLogits);
+        const expLogits = scaledLogits.map(l => Math.exp(l - maxLogit));
+        const sumExp = expLogits.reduce((a, b) => a + b, 0);
+        const probs = expLogits.map(e => e / sumExp);
+        
+        // Top-K sampling
+        const indexedProbs = probs.map((p, i) => ({ prob: p, index: i }));
+        indexedProbs.sort((a, b) => b.prob - a.prob);
+        const topKProbs = indexedProbs.slice(0, topK);
+        
+        // Top-P (nucleus) sampling
+        let cumulativeProb = 0;
+        const nucleusProbs = [];
+        for (const item of topKProbs) {
+            cumulativeProb += item.prob;
+            nucleusProbs.push(item);
+            if (cumulativeProb >= topP) break;
+        }
+        
+        // Rinormalizza probabilità
+        const nucleusSum = nucleusProbs.reduce((a, b) => a + b.prob, 0);
+        const normalizedProbs = nucleusProbs.map(item => item.prob / nucleusSum);
+        
+        // Sampling
+        const rand = Math.random();
+        let sampleProb = 0;
+        let sampledIndex = nucleusProbs[0].index;
+        
+        for (let i = 0; i < normalizedProbs.length; i++) {
+            sampleProb += normalizedProbs[i];
+            if (rand <= sampleProb) {
+                sampledIndex = nucleusProbs[i].index;
+                break;
+            }
+        }
+        
+        return sampledIndex;
+    }
+    
+    /**
+     * Converti token ID in testo usando vocabolario
+     */
+    decodeToken(tokenId) {
+        if (!this.vocab) {
+            // Fallback se vocab non disponibile
+            return String.fromCharCode(65 + (tokenId % 26)); // A-Z
+        }
+        
+        const token = this.vocab[tokenId];
+        if (token === undefined) {
+            // Fallback per token non trovato
+            return String.fromCharCode(65 + (tokenId % 26));
+        }
+        
+        return token;
+    }
+    
     get currentEngineState() {
         return this.internalState;
     }

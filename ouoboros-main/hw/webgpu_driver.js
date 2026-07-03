@@ -145,16 +145,7 @@ export class WebGpuDriver {
         gOutput.destroy();
         gRead.destroy();
         
-        // Genera token dal risultato (simplificato per ora)
-        const token = this.generateTokenFromOutput(outputBufferMapped);
-        
-        return { token, output: outputBufferMapped };
-    }
-    
-    generateTokenFromOutput(output) {
-        // Generazione token semplificata dall'output GPU
-        const maxIndex = output.indexOf(Math.max(...output));
-        const token = String.fromCharCode(65 + (maxIndex % 26)); // A-Z
-        return token;
+        // Restituisci logits per sampling (non più lettere placeholder)
+        return { logits: outputBufferMapped, output: outputBufferMapped };
     }
 }

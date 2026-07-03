@@ -44,17 +44,7 @@ export class WebNnDriver {
         const finalOutputBuffer = new Float32Array(outputLen);
         await this.context.compute(compiledGraph, { 'inputTensor': new Float32Array([1]) }, { 'outputTensor': finalOutputBuffer });
         
-        // Genera token dal risultato (simplificato per ora)
-        const token = this.generateTokenFromOutput(finalOutputBuffer);
-        
-        return { token, output: finalOutputBuffer };
-    }
-    
-    generateTokenFromOutput(output) {
-        // Generazione token semplificata dall'output NPU
-        // In una implementazione completa, questo userebbe il tokenizer
-        const maxIndex = output.indexOf(Math.max(...output));
-        const token = String.fromCharCode(65 + (maxIndex % 26)); // A-Z
-        return token;
+        // Restituisci logits per sampling (non più lettere placeholder)
+        return { logits: finalOutputBuffer, output: finalOutputBuffer };
     }
 }
