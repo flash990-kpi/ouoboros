@@ -7,7 +7,7 @@ import { SparsityPredictor } from '../asts/sparsityPredictor.js';
 import { WeightSynthesizer } from '../asts/weightSynthesizer.js';
 import { GgufStreamer } from '../io/ggufStreamer.js';
 import { Scheduler } from './scheduler.js';
-import { Wllama } from '../wllama.bundle.js';
+import { Wllama } from 'https://cdn.jsdelivr.net/npm/@wllama/wllama@3.1.0/esm/index.min.js';
 export class OuroborosKernel {
     constructor(stateChangeNotifier) {
         this.internalState = 'BOOTSTRAPPING';
@@ -24,7 +24,7 @@ export class OuroborosKernel {
         this.wllama = null;
         this.localGgufFile = null;
         this.wllamaConfig = {
-            default: './wllama.wasm'
+            default: 'https://cdn.jsdelivr.net/npm/@wllama/wllama@3.1.0/esm/wasm/wllama.wasm'
         };
     }
     /**
