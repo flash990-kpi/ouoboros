@@ -12,79 +12,27 @@ export class GGUFTransformer {
     }
 
     /**
-     * Carica file GGUF dal blob
+     * Carica file GGUF dai dati parsati (evita rilettura file)
      */
-    async loadGGUF(fileBlob) {
-        console.log('[GGUF TRANSFORMER] Loading GGUF file...');
+    async loadGGUF(parsedData) {
+        console.log('[GGUF TRANSFORMER] Loading GGUF from parsed data...');
         
-        const arrayBuffer = await fileBlob.arrayBuffer();
-        const dataView = new DataView(arrayBuffer);
+        // Usa i dati già parsati da @huggingface/gguf
+        this.metadata = parsedData.metadata;
+        this.tensors = new Map();
         
-        // Parse GGUF header
-        const magic = dataView.getUint32(0, true);
-        if (magic !== 0x46554747) { // 'GGUF' in little endian
-            throw new Error('Invalid GGUF magic number');
-        }
-        
-        const version = dataView.getUint32(4, true);
-        const tensorCount = dataView.getUint64(8, true);
-        const metadataKVCount = dataView.getUint64(16, true);
-        
-        console.log('[GGUF TRANSFORMER] GGUF version:', version);
-        console.log('[GGUF TRANSFORMER] Tensors:', tensorCount);
-        console.log('[GGUF TRANSFORMER] Metadata entries:', metadataKVCount);
-        
-        // Parse metadata
-        let offset = 24;
-        this.metadata = {};
-        
-        for (let i = 0; i < metadataKVCount; i++) {
-            const keyLength = dataView.getUint64(offset, true);
-            offset += 8;
-            const key = new TextDecoder().decode(new Uint8Array(arrayBuffer, offset, keyLength));
-            offset += keyLength;
-            
-            const type = dataView.getUint32(offset, true);
-            offset += 4;
-            
-            const value = this.parseValue(dataView, arrayBuffer, offset, type);
-            offset = value.newOffset;
-            
-            this.metadata[key] = value.data;
-        }
-        
-        // Parse tensors
-        for (let i = 0; i < tensorCount; i++) {
-            const nameLength = dataView.getUint64(offset, true);
-            offset += 8;
-            const name = new TextDecoder().decode(new Uint8Array(arrayBuffer, offset, nameLength));
-            offset += nameLength;
-            
-            const ndim = dataView.getUint32(offset, true);
-            offset += 4;
-            
-            const dimensions = [];
-            for (let j = 0; j < ndim; j++) {
-                dimensions.push(dataView.getUint64(offset, true));
-                offset += 8;
-            }
-            
-            const dtype = dataView.getUint32(offset, true);
-            offset += 4;
-            
-            const offsetBytes = dataView.getUint64(offset, true);
-            offset += 8;
-            
-            this.tensors.set(name, {
-                name,
-                dimensions,
-                dtype,
-                offset: offsetBytes
+        for (const tensorInfo of parsedData.tensorInfos) {
+            this.tensors.set(tensorInfo.name, {
+                name: tensorInfo.name,
+                dimensions: tensorInfo.shape.map(dim => Number(dim)),
+                dtype: tensorInfo.dtype,
+                offset: Number(tensorInfo.offset || 0)
             });
         }
         
-        console.log('[GGUF TRANSFORMER] GGUF loaded successfully');
+        console.log('[GGUF TRANSFORMER] GGUF loaded successfully from parsed data');
         console.log('[GGUF TRANSFORMER] Metadata:', this.metadata);
+        console.log('[GGUF TRANSFORMER] Tensors:', this.tensors.size);
         
         return {
             metadata: this.metadata,

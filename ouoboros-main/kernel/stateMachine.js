@@ -58,10 +58,13 @@ export class OuroborosKernel {
             // Salva il file GGUF locale fornito dall'utente
             this.localGgufFile = source.fileObject;
             
-            // Inizializza GGUF Transformer per inferenza diretta con file GGUF dell'utente
+            // Inizializza GGUF Transformer con dati già parsati da ggufStreamer
             console.log('[STATE MACHINE] Initializing GGUF Transformer...');
             
-            await this.ggufTransformer.loadGGUF(this.localGgufFile);
+            // Ottieni i dati parsati dal ggufStreamer
+            const parsedGGUF = await this.fileStreamer.getParsedGGUF();
+            
+            await this.ggufTransformer.loadGGUF(parsedGGUF);
             
             console.log('[STATE MACHINE] GGUF Transformer initialized with user GGUF file');
             

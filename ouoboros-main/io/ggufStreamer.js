@@ -28,6 +28,7 @@ export class GgufStreamer {
             throw new Error("L'origine di streaming remota richiede la specifica di un URL endpoint valido.");
         }
         this.source = source;
+        this.parsedGGUF = null; // Cache dei dati parsati
     }
     
     // Metodo per leggere chunk di peso (usato dall'inferenza)
@@ -63,6 +64,9 @@ export class GgufStreamer {
                 tensorCount: tensorInfos.length,
                 metadataKeys: Object.keys(metadata)
             });
+            
+            // Cache dei dati parsati per riutilizzo
+            this.parsedGGUF = { metadata, tensorInfos };
             
             // Converti i tensori dal formato @huggingface/gguf al nostro formato
             const tensors = [];
@@ -210,6 +214,14 @@ export class GgufStreamer {
         catch (e) {
             console.warn('[OUROBOROS] Salvataggio .ouro fallito:', e);
         }
+    }
+    
+    // Metodo per ottenere i dati GGUF parsati (evita rilettura file)
+    getParsedGGUF() {
+        if (!this.parsedGGUF) {
+            throw new Error('GGUF non ancora parsato. Chiama generateTopologyFromGguf prima.');
+        }
+        return this.parsedGGUF;
     }
     readLocalSlice(offset, length) {
         return new Promise((resolve, reject) => {
