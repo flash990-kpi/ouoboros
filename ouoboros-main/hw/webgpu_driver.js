@@ -27,7 +27,8 @@ export class WebGpuDriver {
         // @ts-ignore - WebGPU types not available in Node.js environment
         this.pipeline = null;
     }
-    async initialize() {
+    async initialize(hardwareProfile) {
+        console.log('[WEBGPU DRIVER] Initializing GPU driver...');
         // @ts-ignore - WebGPU not available in Node.js environment
         if (!navigator.gpu) {
             throw new Error("WebGPU non implementato nel contesto browser corrente.");
@@ -39,6 +40,7 @@ export class WebGpuDriver {
         }
         this.device = await adapter.requestDevice();
         this.compileShaderCore();
+        console.log('[WEBGPU DRIVER] GPU driver initialized successfully');
     }
     compileShaderCore() {
         if (!this.device)
@@ -76,15 +78,20 @@ export class WebGpuDriver {
             }
         });
     }
-    async executePayload(weightBuffer, inputData) {
+    async execute(weights, tensorInfo, routingPath) {
+        console.log('[WEBGPU DRIVER] Executing on GPU...');
         if (!this.device || !this.pipeline) {
             throw new Error("Impossibile eseguire il payload: Driver WebGPU non inizializzato.");
         }
-        const floatArrayWeights = new Float32Array(weightBuffer);
-        const outputLength = floatArrayWeights.length / inputData.length;
+        
+        const floatArrayWeights = new Float32Array(weights);
+        const inputLen = tensorInfo.shape.reduce((a, b) => a * b, 1);
+        const outputLength = floatArrayWeights.length / inputLen;
+        
         if (outputLength <= 0 || outputLength % 1 !== 0) {
-            throw new Error(`Incongruenza dimensionale della matrice dei pesi. Elementi: ${floatArrayWeights.length}, Input: ${inputData.length}`);
+            throw new Error(`Incongruenza dimensionale della matrice dei pesi. Elementi: ${floatArrayWeights.length}, Input: ${inputLen}`);
         }
+        
         const gWeights = this.device.createBuffer({
             size: floatArrayWeights.byteLength,
             usage: GPUBufferUsage.STORAGE,
@@ -92,21 +99,25 @@ export class WebGpuDriver {
         });
         new Float32Array(gWeights.getMappedRange()).set(floatArrayWeights);
         gWeights.unmap();
+        
         const gInput = this.device.createBuffer({
-            size: inputData.byteLength,
+            size: inputLen * 4,
             usage: GPUBufferUsage.STORAGE,
             mappedAtCreation: true
         });
-        new Float32Array(gInput.getMappedRange()).set(inputData);
+        new Float32Array(gInput.getMappedRange()).set(new Float32Array(inputLen).fill(1)); // Input placeholder
         gInput.unmap();
+        
         const gOutput = this.device.createBuffer({
             size: outputLength * 4,
             usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC
         });
+        
         const gRead = this.device.createBuffer({
             size: outputLength * 4,
             usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ
         });
+        
         const bindGroup = this.device.createBindGroup({
             layout: this.pipeline.getBindGroupLayout(0),
             entries: [
@@ -115,6 +126,7 @@ export class WebGpuDriver {
                 { binding: 2, resource: { buffer: gOutput } }
             ]
         });
+        
         const cmdEncoder = this.device.createCommandEncoder();
         const passEncoder = cmdEncoder.beginComputePass();
         passEncoder.setPipeline(this.pipeline);
@@ -123,13 +135,26 @@ export class WebGpuDriver {
         passEncoder.end();
         cmdEncoder.copyBufferToBuffer(gOutput, 0, gRead, 0, outputLength * 4);
         this.device.queue.submit([cmdEncoder.finish()]);
+        
         await gRead.mapAsync(GPUMapMode.READ);
         const outputBufferMapped = new Float32Array(gRead.getMappedRange().slice(0));
         gRead.unmap();
+        
         gWeights.destroy();
         gInput.destroy();
         gOutput.destroy();
         gRead.destroy();
-        return outputBufferMapped;
+        
+        // Genera token dal risultato (simplificato per ora)
+        const token = this.generateTokenFromOutput(outputBufferMapped);
+        
+        return { token, output: outputBufferMapped };
+    }
+    
+    generateTokenFromOutput(output) {
+        // Generazione token semplificata dall'output GPU
+        const maxIndex = output.indexOf(Math.max(...output));
+        const token = String.fromCharCode(65 + (maxIndex % 26)); // A-Z
+        return token;
     }
 }

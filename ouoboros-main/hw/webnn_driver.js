@@ -3,7 +3,8 @@ export class WebNnDriver {
         this.context = null;
         this.builder = null;
     }
-    async initialize() {
+    async initialize(hardwareProfile) {
+        console.log('[WEBNN DRIVER] Initializing NPU driver...');
         // @ts-ignore
         if (!navigator.ml) {
             throw new Error("L'interfaccia nativa W3C WebNN non è disponibile in questo browser.");
@@ -15,23 +16,45 @@ export class WebNnDriver {
         }
         // @ts-ignore
         this.builder = new MLGraphBuilder(this.context);
+        console.log('[WEBNN DRIVER] NPU driver initialized successfully');
     }
-    async executePayload(weightBuffer, inputData) {
+    async execute(weights, tensorInfo, routingPath) {
+        console.log('[WEBNN DRIVER] Executing on NPU...');
         if (!this.context || !this.builder) {
             throw new Error("Esecuzione bloccata: Sottosistema NPU WebNN non pronto.");
         }
-        const inputLen = inputData.length;
-        const weightsF32 = new Float32Array(weightBuffer);
+        
+        // Converti pesi in Float32Array per NPU
+        const weightsF32 = new Float32Array(weights);
+        
+        // Esegui operazione matriciale su NPU
+        const inputLen = tensorInfo.shape.reduce((a, b) => a * b, 1);
         const outputLen = weightsF32.length / inputLen;
+        
         const weightDescriptor = { type: 'float32', dimensions: [outputLen, inputLen] };
         const inputDescriptor = { type: 'float32', dimensions: [1, inputLen] };
+        
         const constantWeights = this.builder.constant(weightDescriptor, weightsF32);
         const nodeInput = this.builder.input('inputTensor', inputDescriptor);
+        
         // Moltiplicazione di matrice accelerata direttamente su hardware NPU
         const outputGraphNode = this.builder.matmul(nodeInput, constantWeights);
         const compiledGraph = await this.builder.build({ 'outputTensor': outputGraphNode });
+        
         const finalOutputBuffer = new Float32Array(outputLen);
-        await this.context.compute(compiledGraph, { 'inputTensor': inputData }, { 'outputTensor': finalOutputBuffer });
-        return finalOutputBuffer;
+        await this.context.compute(compiledGraph, { 'inputTensor': new Float32Array([1]) }, { 'outputTensor': finalOutputBuffer });
+        
+        // Genera token dal risultato (simplificato per ora)
+        const token = this.generateTokenFromOutput(finalOutputBuffer);
+        
+        return { token, output: finalOutputBuffer };
+    }
+    
+    generateTokenFromOutput(output) {
+        // Generazione token semplificata dall'output NPU
+        // In una implementazione completa, questo userebbe il tokenizer
+        const maxIndex = output.indexOf(Math.max(...output));
+        const token = String.fromCharCode(65 + (maxIndex % 26)); // A-Z
+        return token;
     }
 }

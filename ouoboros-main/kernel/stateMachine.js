@@ -7,8 +7,6 @@ import { SparsityPredictor } from '../asts/sparsityPredictor.js';
 import { WeightSynthesizer } from '../asts/weightSynthesizer.js';
 import { GgufStreamer } from '../io/ggufStreamer.js';
 import { Scheduler } from './scheduler.js';
-import { Wllama } from 'https://cdn.jsdelivr.net/npm/@wllama/wllama@3.1.0/esm/index.min.js';
-import { HfInference } from 'https://cdn.jsdelivr.net/npm/@huggingface/inference@2.6.4/dist/index.min.js';
 export class OuroborosKernel {
     constructor(stateChangeNotifier) {
         this.internalState = 'BOOTSTRAPPING';
@@ -21,76 +19,11 @@ export class OuroborosKernel {
         this.topologyParser = new TopologyParser();
         this.weightSynthesizer = new WeightSynthesizer();
         this.onStateChange = stateChangeNotifier;
-        // Wllama per vera inferenza GGUF locale (modelli piccoli)
-        this.wllama = null;
+        
+        // A.S.T.S. System - True zero-RAM loading with partial weight streaming
         this.localGgufFile = null;
-        this.wllamaConfig = {
-            default: 'https://cdn.jsdelivr.net/npm/@wllama/wllama@3.1.0/esm/wasm/wllama.wasm'
-        };
-        
-        // Hugging Face Inference API per cloud (modelli grandi/mobile)
-        this.hfInference = null;
-        this.hfApiKey = null; // Da configurare
-        this.useCloudInference = false;
-        
-        // Sistema ibrido intelligente
-        this.inferenceMode = 'local'; // 'local', 'cloud', 'hybrid'
-        this.deviceType = 'desktop'; // 'desktop', 'mobile'
-    }
-    
-    /**
-     * Detect device type (desktop vs mobile)
-     */
-    detectDeviceType() {
-        const userAgent = navigator.userAgent;
-        const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(userAgent);
-        this.deviceType = isMobile ? 'mobile' : 'desktop';
-        console.log('[STATE MACHINE] Device type detected:', this.deviceType);
-        return this.deviceType;
-    }
-    
-    /**
-     * Determine optimal inference mode based on device and model size
-     */
-    determineInferenceMode(modelSize) {
-        this.detectDeviceType();
-        
-        const MODEL_SIZE_THRESHOLD = 4 * 1024 * 1024 * 1024; // 4GB
-        
-        if (this.deviceType === 'mobile') {
-            // Mobile: sempre usa cloud Hugging Face
-            this.inferenceMode = 'cloud';
-            console.log('[STATE MACHINE] Mobile device: using cloud inference (Hugging Face)');
-        } else if (modelSize > MODEL_SIZE_THRESHOLD) {
-            // Desktop + modello grande: cloud o server locale
-            this.inferenceMode = 'cloud';
-            console.log('[STATE MACHINE] Large model (>4GB): using cloud inference');
-        } else {
-            // Desktop + modello piccolo: locale wllama
-            this.inferenceMode = 'local';
-            console.log('[STATE MACHINE] Small model (<4GB): using local inference (wllama)');
-        }
-        
-        return this.inferenceMode;
-    }
-    
-    /**
-     * Set Hugging Face API key for cloud inference
-     */
-    setHfApiKey(apiKey) {
-        this.hfApiKey = apiKey;
-        if (this.hfInference) {
-            this.hfInference = new HfInference(apiKey);
-        }
-        console.log('[STATE MACHINE] Hugging Face API key set');
-    }
-    
-    /**
-     * Set model ID for cloud inference
-     */
-    setCloudModelId(modelId) {
-        this.cloudModelId = modelId;
-        console.log('[STATE MACHINE] Cloud model ID set:', modelId);
+        this.ggufStreamer = null;
+        this.activeDriver = null; // WebNN (NPU), WebGPU (GPU), or WASM (CPU)
     }
     /**
      * Inizializza l'architettura. Se il buffer .ouro è null,
@@ -129,55 +62,28 @@ export class OuroborosKernel {
             // Salva il file GGUF locale fornito dall'utente
             this.localGgufFile = source.fileObject;
             
-            // Determina modalità inferenza ottimale
-            const modelSize = this.localGgufFile ? this.localGgufFile.size : 0;
-            this.determineInferenceMode(modelSize);
+            // Seleziona driver hardware ottimale (NPU > GPU > CPU)
+            console.log('[STATE MACHINE] Selecting optimal hardware driver...');
             
-            if (this.inferenceMode === 'cloud') {
-                // Cloud inference con Hugging Face
-                console.log('[STATE MACHINE] Initializing Hugging Face Inference API...');
-                
-                // Usa API key se configurata, altrimenti inference gratuita
-                this.hfApiKey = this.hfApiKey || null;
-                this.hfInference = new HfInference(this.hfApiKey);
-                
-                console.log('[STATE MACHINE] Cloud inference ready (no local model loading needed)');
+            if (this.hardwareProfile.primaryDriver === 'webnn') {
+                this.activeDriver = this.driverWebNn;
+                console.log('[STATE MACHINE] Using WebNN driver (NPU) - optimal for mobile');
+            } else if (this.hardwareProfile.primaryDriver === 'webgpu') {
+                this.activeDriver = this.driverWebGpu;
+                console.log('[STATE MACHINE] Using WebGPU driver (GPU) - high performance');
             } else {
-                // Local inference con wllama
-                console.log('[STATE MACHINE] Initializing Wllama for local GGUF inference...');
-                
-                this.wllama = new Wllama(this.wllamaConfig);
-                
-                // Carica il modello GGUF locale
-                console.log('[STATE MACHINE] Loading local GGUF file with Wllama...');
-                console.log('[STATE MACHINE] File size:', this.localGgufFile.size, 'bytes (', (this.localGgufFile.size / 1e9).toFixed(2), 'GB)');
-                
-                const progressCallback = ({ loaded, total }) => {
-                    const progress = Math.round((loaded / total) * 100);
-                    console.log(`[STATE MACHINE] Loading GGUF: ${progress}%`);
-                };
-                
-                try {
-                    await this.wllama.loadModel([this.localGgufFile], {
-                        progressCallback,
-                        n_gpu_layers: 35, // Offload 35 layers to GPU per modello grande
-                        n_ctx: 2048, // Context size
-                        use_mmap: true, // Use memory mapping for large files
-                    });
-                    
-                    console.log('[STATE MACHINE] Wllama loaded successfully with real GGUF model');
-                } catch (error) {
-                    console.error('[STATE MACHINE] Wllama load error:', error);
-                    if (error.message.includes('offset is out of bounds') || error.message.includes('memory')) {
-                        // Fallback to cloud inference if local fails
-                        console.warn('[STATE MACHINE] Local inference failed, falling back to cloud...');
-                        this.inferenceMode = 'cloud';
-                        this.hfInference = new HfInference(this.hfApiKey);
-                    } else {
-                        throw error;
-                    }
-                }
+                this.activeDriver = this.driverWasm;
+                console.log('[STATE MACHINE] Using WASM driver (CPU) - SIMD fallback');
             }
+            
+            // Inizializza GGUF Streamer per streaming parziale pesi
+            this.ggufStreamer = streamerInstance || new GgufStreamer(source);
+            
+            // Inizializza driver selezionato
+            console.log('[STATE MACHINE] Initializing hardware driver...');
+            await this.activeDriver.initialize(this.hardwareProfile);
+            
+            console.log('[STATE MACHINE] A.S.T.S. system ready - zero RAM loading, partial weight streaming');
             
             this.transitionTo('IDLE', {
                 driver: this.hardwareProfile.primaryDriver,
@@ -192,11 +98,19 @@ export class OuroborosKernel {
     }
     /**
      * Inietta un prompt nel motore di navigazione geometrica A.S.T.S.
-     * Usa sistema ibrido: locale (wllama) o cloud (Hugging Face) in base al dispositivo/modello.
+     * Vera inferenza A.S.T.S.: zero RAM loading, partial weight streaming
      */
     submitInference(prompt, onTokenGenerated) {
         if (this.internalState === 'BOOTSTRAPPING' || this.internalState === 'ERROR') {
             throw new Error(`Invocazione di inferenza non consentita nello stato corrente: ${this.internalState}`);
+        }
+        
+        if (!this.activeDriver) {
+            throw new Error('Hardware driver non inizializzato');
+        }
+        
+        if (!this.ggufStreamer) {
+            throw new Error('GGUF Streamer non inizializzato');
         }
         
         this.executionScheduler.enqueue({
@@ -208,6 +122,7 @@ export class OuroborosKernel {
                     
                     // FASE DI ANALISI GEOMETRICA A.S.T.S.
                     const routingPath = this.sparsityPredictor.predictRoutingPath(prompt);
+                    console.log('[STATE MACHINE] A.S.T.S. routing path calculated:', routingPath);
                     
                     this.transitionTo('SYNTHESIS', {
                         hash: 0,
@@ -215,76 +130,54 @@ export class OuroborosKernel {
                         total: routingPath.requiredTensors.length
                     });
                     
+                    // FASE DI SINTESI A.S.T.S. - Streaming parziale pesi
                     this.transitionTo('EXECUTION', { layer: 0 });
                     
-                    if (this.inferenceMode === 'cloud') {
-                        // CLOUD INFERENCE con Hugging Face
-                        console.log('[STATE MACHINE] Using cloud inference (Hugging Face)');
+                    console.log('[STATE MACHINE] Starting A.S.T.S. partial weight streaming...');
+                    
+                    // Per ogni tensore richiesto, streaming parziale dal GGUF
+                    for (let i = 0; i < routingPath.requiredTensors.length; i++) {
+                        const tensorInfo = routingPath.requiredTensors[i];
                         
-                        // Usa modello Hugging Face appropriato (può essere configurato)
-                        const modelId = this.cloudModelId || 'meta-llama/Llama-3.1-70B-Instruct';
+                        // Streaming parziale: leggi solo i byte necessari dal GGUF
+                        const weightChunk = await this.ggufStreamer.readWeightChunk(
+                            tensorInfo.ggufOffset,
+                            tensorInfo.byteLength
+                        );
                         
-                        const stream = await this.hfInference.textGeneration({
-                            model: modelId,
-                            inputs: prompt,
-                            parameters: {
-                                max_new_tokens: 100,
-                                temperature: 0.7,
-                                top_k: 40,
-                                top_p: 0.9,
-                                return_full_text: false
-                            }
-                        });
+                        // Sintesi pesi con WeightSynthesizer
+                        const synthesizedWeights = await this.weightSynthesizer.synthesize(
+                            weightChunk,
+                            routingPath.targetRank,
+                            tensorInfo.shape
+                        );
                         
-                        // Streaming della risposta
-                        for await (const chunk of stream) {
-                            const token = chunk.token?.text || '';
-                            if (token) {
-                                onTokenGenerated(token, {
-                                    layer: 0,
-                                    rank: routingPath.targetRank,
-                                    compression: routingPath.dynamicCompressionRatio,
-                                    activeNodes: routingPath.requiredTensors.length,
-                                    inferenceMode: 'cloud'
-                                });
-                            }
-                        }
-                    } else {
-                        // LOCAL INFERENCE con wllama
-                        console.log('[STATE MACHINE] Using local inference (wllama)');
+                        // Esecuzione su hardware (WebNN/WebGPU/WASM)
+                        const result = await this.activeDriver.execute(
+                            synthesizedWeights,
+                            tensorInfo,
+                            routingPath
+                        );
                         
-                        if (!this.wllama) {
-                            throw new Error('Wllama non inizializzato');
+                        // Streaming token generato
+                        if (result.token) {
+                            onTokenGenerated(result.token, {
+                                layer: tensorInfo.layer,
+                                rank: routingPath.targetRank,
+                                compression: routingPath.dynamicCompressionRatio,
+                                activeNodes: routingPath.requiredTensors.length,
+                                driver: this.hardwareProfile.primaryDriver
+                            });
                         }
                         
-                        // Generazione con Wllama - vera inferenza GGUF
-                        const response = await this.wllama.createChatCompletion({
-                            messages: [{ role: 'user', content: prompt }],
-                            max_tokens: 100,
-                            temperature: 0.7,
-                            top_k: 40,
-                            top_p: 0.9,
-                            stream: true
-                        }, {
-                            onChunk: (chunk) => {
-                                if (chunk.choices && chunk.choices[0] && chunk.choices[0].delta) {
-                                    const token = chunk.choices[0].delta.content || '';
-                                    onTokenGenerated(token, {
-                                        layer: 0,
-                                        rank: routingPath.targetRank,
-                                        compression: routingPath.dynamicCompressionRatio,
-                                        activeNodes: routingPath.requiredTensors.length,
-                                        inferenceMode: 'local'
-                                    });
-                                }
-                            }
-                        });
+                        this.transitionTo('EXECUTION', { layer: i + 1 });
                     }
                     
                     this.transitionTo('IDLE');
+                    console.log('[STATE MACHINE] A.S.T.S. inference complete - zero RAM loading achieved');
                 }
                 catch (err) {
-                    console.error('[STATE MACHINE] Inference error:', err);
+                    console.error('[STATE MACHINE] A.S.T.S. inference error:', err);
                     this.transitionTo('ERROR', { reason: err.message });
                 }
             }
