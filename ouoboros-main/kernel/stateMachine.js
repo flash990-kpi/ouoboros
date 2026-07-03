@@ -7,6 +7,7 @@ import { SparsityPredictor } from '../asts/sparsityPredictor.js';
 import { WeightSynthesizer } from '../asts/weightSynthesizer.js';
 import { GgufStreamer } from '../io/ggufStreamer.js';
 import { Scheduler } from './scheduler.js';
+import { Wllama } from 'https://cdn.jsdelivr.net/npm/@wllama/wllama@3.1.0/esm/index.min.js';
 export class OuroborosKernel {
     constructor(stateChangeNotifier) {
         this.internalState = 'BOOTSTRAPPING';
@@ -24,6 +25,12 @@ export class OuroborosKernel {
         this.localGgufFile = null;
         this.ggufStreamer = null;
         this.activeDriver = null; // WebNN (NPU), WebGPU (GPU), or WASM (CPU)
+        
+        // wllama per vera inferenza LLM (llama.cpp WASM binding)
+        this.wllama = null;
+        this.wllamaConfig = {
+            default: 'https://cdn.jsdelivr.net/npm/@wllama/wllama@3.1.0/esm/wasm/wllama.wasm'
+        };
         
         // Tokenizer per generazione testo reale
         this.tokenizer = null;
@@ -89,11 +96,31 @@ export class OuroborosKernel {
                 console.log('[STATE MACHINE] Extracted vocabulary:', Object.keys(this.vocab).length, 'tokens');
             }
             
-            // Inizializza driver selezionato
-            console.log('[STATE MACHINE] Initializing hardware driver...');
+            // Inizializza wllama per vera inferenza LLM (llama.cpp WASM binding)
+            console.log('[STATE MACHINE] Initializing wllama for true LLM inference...');
+            this.wllama = new Wllama(this.wllamaConfig);
+            
+            // Carica modello GGUF con wllama
+            console.log('[STATE MACHINE] Loading GGUF model with wllama...');
+            const progressCallback = ({ loaded, total }) => {
+                const progress = Math.round((loaded / total) * 100);
+                console.log(`[STATE MACHINE] Loading model: ${progress}%`);
+            };
+            
+            await this.wllama.loadModel([this.localGgufFile], {
+                progressCallback,
+                n_gpu_layers: 35, // Offload layers to GPU se disponibile
+                n_ctx: 2048, // Context size
+                use_mmap: true, // Memory mapping per modelli grandi
+            });
+            
+            console.log('[STATE MACHINE] wllama loaded successfully with true LLM inference');
+            
+            // Inizializza driver selezionato per profiling hardware
+            console.log('[STATE MACHINE] Initializing hardware driver for profiling...');
             await this.activeDriver.initialize(this.hardwareProfile);
             
-            console.log('[STATE MACHINE] A.S.T.S. system ready - zero RAM loading, partial weight streaming');
+            console.log('[STATE MACHINE] A.S.T.S. system ready with wllama LLM inference');
             
             this.transitionTo('IDLE', {
                 driver: this.hardwareProfile.primaryDriver,
@@ -108,19 +135,15 @@ export class OuroborosKernel {
     }
     /**
      * Inietta un prompt nel motore di navigazione geometrica A.S.T.S.
-     * Vera inferenza A.S.T.S.: zero RAM loading, partial weight streaming
+     * Vera inferenza LLM con wllama (llama.cpp WASM binding)
      */
     submitInference(prompt, onTokenGenerated) {
         if (this.internalState === 'BOOTSTRAPPING' || this.internalState === 'ERROR') {
             throw new Error(`Invocazione di inferenza non consentita nello stato corrente: ${this.internalState}`);
         }
         
-        if (!this.activeDriver) {
-            throw new Error('Hardware driver non inizializzato');
-        }
-        
-        if (!this.ggufStreamer) {
-            throw new Error('GGUF Streamer non inizializzato');
+        if (!this.wllama) {
+            throw new Error('wllama non inizializzato');
         }
         
         this.executionScheduler.enqueue({
@@ -140,73 +163,40 @@ export class OuroborosKernel {
                         total: routingPath.requiredTensors.length
                     });
                     
-                    // FASE DI SINTESI A.S.T.S. - Streaming parziale pesi
                     this.transitionTo('EXECUTION', { layer: 0 });
                     
-                    console.log('[STATE MACHINE] Starting A.S.T.S. partial weight streaming...');
+                    console.log('[STATE MACHINE] Starting true LLM inference with wllama...');
                     
-                    // Per ogni tensore richiesto, streaming parziale dal GGUF
-                    for (let i = 0; i < routingPath.requiredTensors.length; i++) {
-                        const tensorInfo = routingPath.requiredTensors[i];
-                        
-                        // Ensure tensorInfo has required properties
-                        if (!tensorInfo) {
-                            console.warn('[STATE MACHINE] Skipping undefined tensor at index', i);
-                            continue;
+                    // VERA INFERENZA LLM con wllama (llama.cpp WASM binding)
+                    const response = await this.wllama.createChatCompletion({
+                        messages: [{ role: 'user', content: prompt }],
+                        max_tokens: 100,
+                        temperature: 0.7,
+                        top_k: 40,
+                        top_p: 0.9,
+                        stream: true
+                    }, {
+                        onChunk: (chunk) => {
+                            if (chunk.choices && chunk.choices[0] && chunk.choices[0].delta) {
+                                const token = chunk.choices[0].delta.content || '';
+                                if (token) {
+                                    onTokenGenerated(token, {
+                                        layer: 0,
+                                        rank: routingPath.targetRank,
+                                        compression: routingPath.dynamicCompressionRatio,
+                                        activeNodes: routingPath.requiredTensors.length,
+                                        driver: this.hardwareProfile.primaryDriver
+                                    });
+                                }
+                            }
                         }
-                        
-                        // Ensure tensorInfo has shape property
-                        if (!tensorInfo.shape) {
-                            tensorInfo.shape = [1, Math.max(1, tensorInfo.byteLength / 4)];
-                        }
-                        
-                        // Ensure tensorInfo has layer property
-                        if (!tensorInfo.layer) {
-                            tensorInfo.layer = tensorInfo.layerIndex || 0;
-                        }
-                        
-                        // Streaming parziale: leggi solo i byte necessari dal GGUF
-                        const weightChunk = await this.ggufStreamer.readWeightChunk(
-                            tensorInfo.ggufOffset,
-                            tensorInfo.byteLength
-                        );
-                        
-                        // Sintesi pesi con WeightSynthesizer
-                        const synthesizedWeights = await this.weightSynthesizer.synthesizeTensor(
-                            weightChunk,
-                            tensorInfo.dtype || tensorInfo.tensorType || 0,
-                            routingPath.targetRank
-                        );
-                        
-                        // Esecuzione su hardware (WebNN/WebGPU/WASM)
-                        const result = await this.activeDriver.execute(
-                            synthesizedWeights,
-                            tensorInfo,
-                            routingPath
-                        );
-                        
-                        // Usa logits per generare testo reale con sampling
-                        if (result.logits) {
-                            const tokenId = this.sampleTokenFromLogits(result.logits, 0.7, 40, 0.9);
-                            const tokenText = this.decodeToken(tokenId);
-                            
-                            onTokenGenerated(tokenText, {
-                                layer: tensorInfo.layer,
-                                rank: routingPath.targetRank,
-                                compression: routingPath.dynamicCompressionRatio,
-                                activeNodes: routingPath.requiredTensors.length,
-                                driver: this.hardwareProfile.primaryDriver
-                            });
-                        }
-                        
-                        this.transitionTo('EXECUTION', { layer: i + 1 });
-                    }
+                    });
                     
                     this.transitionTo('IDLE');
-                    console.log('[STATE MACHINE] A.S.T.S. inference complete - zero RAM loading achieved');
+                    console.log('[STATE MACHINE] wllama LLM inference complete');
                 }
                 catch (err) {
-                    console.error('[STATE MACHINE] A.S.T.S. inference error:', err);
+                    console.error('[STATE MACHINE] wllama inference error:', err);
                     this.transitionTo('ERROR', { reason: err.message });
                 }
             }
