@@ -70,8 +70,9 @@ const server = http.createServer((req, res) => {
 
         const headers = {
             'Content-Type': contentType,
-            'Cross-Origin-Opener-Policy': 'same-origin',
-            'Cross-Origin-Embedder-Policy': 'require-corp',
+            // Temporaneamente disabilitati COOP/COEP per sviluppo
+            // 'Cross-Origin-Opener-Policy': 'same-origin',
+            // 'Cross-Origin-Embedder-Policy': 'require-corp',
             'Cross-Origin-Resource-Policy': 'cross-origin',
             'Access-Control-Allow-Origin': '*',
             'Cache-Control': 'no-cache, no-store, must-revalidate',
