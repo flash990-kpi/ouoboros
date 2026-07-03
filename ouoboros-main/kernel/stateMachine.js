@@ -139,6 +139,22 @@ export class OuroborosKernel {
                     for (let i = 0; i < routingPath.requiredTensors.length; i++) {
                         const tensorInfo = routingPath.requiredTensors[i];
                         
+                        // Ensure tensorInfo has required properties
+                        if (!tensorInfo) {
+                            console.warn('[STATE MACHINE] Skipping undefined tensor at index', i);
+                            continue;
+                        }
+                        
+                        // Ensure tensorInfo has shape property
+                        if (!tensorInfo.shape) {
+                            tensorInfo.shape = [1, Math.max(1, tensorInfo.byteLength / 4)];
+                        }
+                        
+                        // Ensure tensorInfo has layer property
+                        if (!tensorInfo.layer) {
+                            tensorInfo.layer = tensorInfo.layerIndex || 0;
+                        }
+                        
                         // Streaming parziale: leggi solo i byte necessari dal GGUF
                         const weightChunk = await this.ggufStreamer.readWeightChunk(
                             tensorInfo.ggufOffset,
@@ -148,7 +164,7 @@ export class OuroborosKernel {
                         // Sintesi pesi con WeightSynthesizer
                         const synthesizedWeights = await this.weightSynthesizer.synthesizeTensor(
                             weightChunk,
-                            tensorInfo.dtype,
+                            tensorInfo.dtype || tensorInfo.tensorType || 0,
                             routingPath.targetRank
                         );
                         

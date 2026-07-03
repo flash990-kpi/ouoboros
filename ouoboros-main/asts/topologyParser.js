@@ -43,7 +43,8 @@ export class TopologyParser {
                 byteLength,
                 layerIndex,
                 tensorType,
-                sparsityRank
+                sparsityRank,
+                shape: [1, byteLength / 4] // Placeholder shape: [1, elements]
             };
             topology.records.set(tensorHash, record);
             if (!topology.layerGroups.has(layerIndex)) {
