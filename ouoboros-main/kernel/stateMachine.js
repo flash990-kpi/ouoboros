@@ -146,10 +146,10 @@ export class OuroborosKernel {
                         );
                         
                         // Sintesi pesi con WeightSynthesizer
-                        const synthesizedWeights = await this.weightSynthesizer.synthesize(
+                        const synthesizedWeights = await this.weightSynthesizer.synthesizeTensor(
                             weightChunk,
-                            routingPath.targetRank,
-                            tensorInfo.shape
+                            tensorInfo.dtype,
+                            routingPath.targetRank
                         );
                         
                         // Esecuzione su hardware (WebNN/WebGPU/WASM)
