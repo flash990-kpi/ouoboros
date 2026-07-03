@@ -1092,18 +1092,18 @@
             log('Ouroboros UI pronta. Trascina un file GGUF o cerca un modello Hugging Face per iniziare.');
             console.log('Ouroboros UI avviata.');
 
-            // ---- Register Service Worker ----
-            if ('serviceWorker' in navigator) {
-                window.addEventListener('load', () => {
-                    navigator.serviceWorker.register('./sw.js')
-                        .then(registration => {
-                            console.log('SW registered:', registration);
-                        })
-                        .catch(error => {
-                            console.log('SW registration failed:', error);
-                        });
-                });
-            }
+            // ---- Service Worker disabilitato per sviluppo (interferisce con moduli ES6) ----
+            // if ('serviceWorker' in navigator) {
+            //     window.addEventListener('load', () => {
+            //         navigator.serviceWorker.register('./sw.js')
+            //             .then(registration => {
+            //                 console.log('SW registered:', registration);
+            //             })
+            //             .catch(error => {
+            //                 console.log('SW registration failed:', error);
+            //             });
+            //     });
+            // }
         }
     </script>
 </body>
